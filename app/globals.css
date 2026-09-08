@@ -507,7 +507,8 @@ footer > span {
 .phase-trigger > svg.rotated {
   transform: rotate(180deg);
 }
-.phase-content {
+.phase-content,
+.pay-content {
   overflow: hidden;
   height: var(--collapsible-panel-height);
   transition:
@@ -515,7 +516,9 @@ footer > span {
     opacity 0.3s;
 }
 .phase-content[data-starting-style],
-.phase-content[data-ending-style] {
+.phase-content[data-ending-style],
+.pay-content[data-starting-style],
+.pay-content[data-ending-style] {
   height: 0;
   opacity: 0;
 }
@@ -871,7 +874,17 @@ footer > span {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 20px;
+  margin-bottom: 0;
+}
+.pay-content-inner {
+  padding: 20px 2px 0;
+}
+.pay-dock.pay-minimized {
+  width: 185px;
+  padding: 8px 12px;
+}
+.pay-minimized .pay-icon {
+  display: none;
 }
 .pay-icon {
   height: 34px;
@@ -1603,7 +1616,7 @@ footer .mobile-info {
     display: grid;
   }
   .pay-dock-title {
-    margin-bottom: 18px;
+    margin-bottom: 0;
   }
   .map-legend {
     left: 50%;

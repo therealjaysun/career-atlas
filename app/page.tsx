@@ -414,7 +414,8 @@ export default function Home() {
   const basis: ClusterBasis = mode === 'explore' ? clusterBy : 'activities';
   const searchQuery = useDeferredValue(query);
   const [percentile, setPercentile] = useState(2),
-    [unit, setUnit] = useState<'annual' | 'hourly'>('annual');
+    [unit, setUnit] = useState<'annual' | 'hourly'>('annual'),
+    [payOpen, setPayOpen] = useState(true);
   const [selected, setSelected] = useState<string | null>(null),
     [hovered, setHovered] = useState<string | null>(null),
     [about, setAbout] = useState(false);
@@ -2202,65 +2203,84 @@ export default function Home() {
           <Scan size={18} />
         </button>
       </div>
-      <div className="pay-dock bubble">
+      <Collapsible
+        open={payOpen}
+        onOpenChange={setPayOpen}
+        className={`pay-dock bubble ${payOpen ? '' : 'pay-minimized'}`}
+      >
         <div className="pay-dock-title">
           <div className="pay-icon">
             <TrendingUp size={18} />
           </div>
           <div>
-            <strong>Explore earning potential</strong>
-            <span>US wage distribution · BLS 2025</span>
+            <strong>{payOpen ? 'Explore earning potential' : 'Pay'}</strong>
+            {payOpen && <span>US wage distribution · BLS 2025</span>}
           </div>
-          <Select
-            value={unit}
-            onValueChange={(v) => setUnit(v as 'annual' | 'hourly')}
-          >
-            <SelectTrigger aria-label="Wage unit" className="unit-select">
-              <SelectValue>
-                {unit === 'annual' ? 'Annual' : 'Hourly'}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="annual">Annual</SelectItem>
-              <SelectItem value="hourly">Hourly</SelectItem>
-            </SelectContent>
-          </Select>
-          <span className="percentile-badge">P{PERCENTILES[percentile]}</span>
-        </div>
-        <Slider
-          aria-label="Wage percentile"
-          min={0}
-          max={4}
-          step={1}
-          value={[percentile]}
-          onValueChange={(v) => setPercentile(Array.isArray(v) ? v[0] : v)}
-          aria-valuetext={`${PERCENTILES[percentile]}th percentile`}
-        />
-        <div className="percentile-labels">
-          {PERCENTILES.map((p, i) => (
-            <button
-              key={p}
-              className={percentile === i ? 'active' : ''}
-              onClick={() => setPercentile(i)}
-              aria-label={`${p}th wage percentile`}
+          {payOpen && (
+            <Select
+              value={unit}
+              onValueChange={(v) => setUnit(v as 'annual' | 'hourly')}
             >
-              {p === 50 ? '50th · Median' : `${p}th`}
-            </button>
-          ))}
-        </div>
-        <div className="pay-dock-bottom">
-          <span>Wages, not total compensation or an earnings forecast.</span>
-          <button
-            onClick={() => {
-              setLayout('map');
-              setColor(color === 'pay' ? 'cluster' : 'pay');
-            }}
+              <SelectTrigger aria-label="Wage unit" className="unit-select">
+                <SelectValue>
+                  {unit === 'annual' ? 'Annual' : 'Hourly'}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="annual">Annual</SelectItem>
+                <SelectItem value="hourly">Hourly</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+          <span className="percentile-badge">P{PERCENTILES[percentile]}</span>
+          <CollapsibleTrigger
+            className="icon-button"
+            aria-label={payOpen ? 'Minimize pay panel' : 'Expand pay panel'}
+            title={payOpen ? 'Minimize pay panel' : 'Expand pay panel'}
           >
-            {color === 'pay' ? <Check size={12} /> : <Layers size={12} />}Pay on
-            map
-          </button>
+            {payOpen ? <Minus size={16} /> : <Plus size={16} />}
+          </CollapsibleTrigger>
         </div>
-      </div>
+        <CollapsibleContent className="pay-content">
+          <div className="pay-content-inner">
+            <Slider
+              aria-label="Wage percentile"
+              min={0}
+              max={4}
+              step={1}
+              value={[percentile]}
+              onValueChange={(v) => setPercentile(Array.isArray(v) ? v[0] : v)}
+              aria-valuetext={`${PERCENTILES[percentile]}th percentile`}
+            />
+            <div className="percentile-labels">
+              {PERCENTILES.map((p, i) => (
+                <button
+                  key={p}
+                  className={percentile === i ? 'active' : ''}
+                  onClick={() => setPercentile(i)}
+                  aria-label={`${p}th wage percentile`}
+                >
+                  {p === 50 ? '50th · Median' : `${p}th`}
+                </button>
+              ))}
+            </div>
+            <div className="pay-dock-bottom">
+              <span>
+                Wages, not total compensation or an earnings forecast.
+              </span>
+              <button
+                onClick={() => {
+                  setLayout('map');
+                  setColor(color === 'pay' ? 'cluster' : 'pay');
+                }}
+              >
+                {color === 'pay' ? <Check size={12} /> : <Layers size={12} />}
+                Pay on map
+              </button>
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
       <div className="map-legend">
         {color === 'quality' || isTree ? (
           Object.entries(QUALITY)
