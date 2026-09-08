@@ -7,6 +7,11 @@ import {
   wageAt,
   money,
   matches,
+  searchOccupations,
+  backgroundOverlap,
+  EMPTY_BACKGROUND,
+  aiValue,
+  aiLabel,
 } from '../lib/career.ts';
 const d = JSON.parse(
   readFileSync(new URL('../public/onet.json', import.meta.url)),
@@ -70,9 +75,111 @@ assert.equal(
 );
 assert(matches(dev, 'software', null, 0));
 assert(!matches(dev, 'unfindable phrase', null, 0));
+for (const typo of [
+  'software enginer',
+  'softwrae developer',
+  'softwore developer',
+]) {
+  assert.equal(searchOccupations(d.occupations, typo, null, 0)[0].id, dev.id);
+}
+assert.equal(
+  searchOccupations(d.occupations, 'registered nruse', null, 0)[0].id,
+  '29-1141.00',
+);
+assert.equal(
+  searchOccupations(d.occupations, 'unfindable phrase', null, 0).length,
+  0,
+);
+assert(
+  searchOccupations(d.occupations, 'RN', null, 0)
+    .slice(0, 3)
+    .some((o) => o.id === '29-1141.00'),
+);
+assert.equal(
+  searchOccupations(d.occupations, 'software', 5, 0).every(
+    (o) => o.cluster === 5,
+  ),
+  true,
+);
+assert(
+  backgroundOverlap(dev, { ...EMPTY_BACKGROUND, major: 'software' }).includes(
+    'software',
+  ),
+);
+assert.deepEqual(
+  backgroundOverlap(dev, {
+    ...EMPTY_BACKGROUND,
+    source: 'Software University',
+    physical: 'software',
+  }),
+  [],
+);
+assert.equal(
+  pathQuality(dev, full, { ...base, education: 6 }, 2).status,
+  'strong',
+);
+assert(
+  pathQuality(clerk, full, { ...base, education: 6 }, 2).reasons.some((r) =>
+    r.includes('underemployment'),
+  ),
+);
+const demand = { ...dev, abilities: [5] };
+assert.equal(
+  pathQuality(demand, full, base, 2, { 0: 3 }, [{ name: 'Stamina' }]).status,
+  'tradeoff',
+);
+assert(
+  pathQuality(demand, full, base, 2, { 0: 3 }, [
+    { name: 'Stamina' },
+  ]).cautions[0].includes('Stamina'),
+);
+assert.equal(
+  pathQuality({ ...dev, abilities: [null] }, full, base, 2, { 0: 0 }, [
+    { name: 'Stamina' },
+  ]).status,
+  'unknown',
+);
+assert.equal(aiValue(dev, 'observed'), 0.288);
+assert.equal(aiValue({ ...dev, ai: undefined }, 'observed'), null);
+assert.equal(
+  aiValue({ ...dev, ai: { ...dev.ai, observed: 0 } }, 'observed'),
+  0,
+);
+assert.equal(
+  aiValue({ ...dev, ai: { ...dev.ai, observed: NaN } }, 'observed'),
+  null,
+);
+assert.equal(
+  aiLabel({ ...dev, ai: undefined }, 'observed'),
+  'AI data unavailable',
+);
+assert.equal(dev.ai.usage.collaboration_bucket_automation_pct, 60.79);
+assert.equal(
+  d.occupations.filter((o) => aiValue(o, 'observed') !== null).length,
+  876,
+);
+assert.equal(
+  d.occupations.filter((o) => aiValue(o, 'applicability') !== null).length,
+  893,
+);
+assert.equal(d.occupations.filter((o) => o.ai.usage !== null).length, 718);
 for (const o of d.occupations) {
   assert(o.tasks.length > 0 && o.activities.length > 0);
   assert.equal(o.skills.length, 35);
+  assert.equal(o.abilities.length, 52);
+  assert(o.abilities.every((v) => v === null || (v >= 0 && v <= 7)));
+  assert.equal(o.ai.soc, o.id.split('.')[0]);
+  for (const metric of ['observed', 'applicability'])
+    assert(o.ai[metric] === null || (o.ai[metric] >= 0 && o.ai[metric] <= 1));
+  if (o.ai.usage)
+    for (const metric of [
+      'pct',
+      'collaboration_bucket_automation_pct',
+      'collaboration_bucket_augmentation_pct',
+    ]) {
+      const v = o.ai.usage[metric];
+      assert(v === undefined || (v >= 0 && v <= 100));
+    }
   assert(o.x >= 0 && o.x <= 1 && o.y >= 0 && o.y <= 1);
   assert(o.trend?.growth !== null && o.trend?.openings >= 0);
   for (const unit of ['annual', 'hourly']) {
@@ -85,5 +192,5 @@ for (const o of d.occupations) {
   }
 }
 console.log(
-  'Verified 923 occupation records; skill alignment, unknown evidence, wage percentiles, outcome thresholds, and PhD underemployment guard.',
+  'Verified 923 records, fuzzy title ranking, profile/ability rules, AI joins and missing-vs-zero data, wage scenarios, and PhD underemployment guard.',
 );

@@ -1,5 +1,14 @@
 'use client';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+/* oxlint-disable jsx-a11y/prefer-tag-over-role -- SVG graph buttons and CSS data meters require explicit ARIA roles. */
+import Link from 'next/link';
+import {
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   ArrowUpRight,
   Check,
@@ -21,7 +30,10 @@ import {
   Sparkles,
   TrendingUp,
   X,
+  GitBranch,
+  ShieldAlert,
 } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import {
@@ -58,15 +70,66 @@ import {
   type Criteria,
   CLUSTER_NAMES,
   COLORS,
-  matches,
+  searchOccupations,
+  titleScore,
+  backgroundOverlap,
+  EDUCATION,
+  EMPTY_BACKGROUND,
+  AI_SOURCES,
+  aiValue,
+  aiLabel,
+  type SearchItem,
+  type Background,
+  type AIMetric,
   money,
   payColor,
   PERCENTILES,
   wageAt,
   type Dataset,
-  type Occupation,
   type Profile,
 } from '@/lib/career';
+
+const BACKGROUND_FIELDS: {
+  key: keyof Background;
+  label: string;
+  placeholder: string;
+}[] = [
+  {
+    key: 'source',
+    label: 'Education source / school / provider',
+    placeholder: 'University, apprenticeship, online provider…',
+  },
+  {
+    key: 'major',
+    label: 'Major / field of study',
+    placeholder: 'Computer science, biology, history…',
+  },
+  {
+    key: 'training',
+    label: 'Specialized training / certifications',
+    placeholder: 'Welding, CPR, cloud certification…',
+  },
+  {
+    key: 'hobbies',
+    label: 'Hobbies & interests',
+    placeholder: 'Photography, gardening, robotics…',
+  },
+  {
+    key: 'talents',
+    label: 'Talents & strengths',
+    placeholder: 'Writing, mathematics, public speaking…',
+  },
+  {
+    key: 'athletics',
+    label: 'Athletic experience / ability',
+    placeholder: 'Swimming, climbing, coaching…',
+  },
+  {
+    key: 'physical',
+    label: 'Physical capability / supports / preferences',
+    placeholder: 'Lifting comfort, stamina, supports you use…',
+  },
+];
 
 function Bubble({
   step,
@@ -103,6 +166,58 @@ function Bubble({
     </Collapsible>
   );
 }
+function ExposureRing({
+  x,
+  y,
+  radius,
+  value,
+  threshold,
+}: {
+  x: number;
+  y: number;
+  radius: number;
+  value: number | null;
+  threshold: number;
+}) {
+  const high = value !== null && value * 100 >= threshold;
+  return (
+    <g className="exposure-ring" aria-hidden="true">
+      {high && (
+        <circle
+          cx={x}
+          cy={y}
+          r={radius + 3}
+          fill="#981f3b"
+          opacity={0.12 + value! * 0.22}
+        />
+      )}
+      <circle
+        cx={x}
+        cy={y}
+        r={radius}
+        fill="none"
+        stroke={value === null ? '#8c8393' : '#66253a'}
+        strokeWidth={1}
+        strokeDasharray={value === null ? '2 3' : undefined}
+        opacity={0.6}
+      />
+      {value !== null && value > 0 && (
+        <circle
+          cx={x}
+          cy={y}
+          r={radius}
+          fill="none"
+          pathLength={100}
+          stroke={high ? '#ff5976' : '#b94761'}
+          strokeWidth={high ? 2.4 : 1.4}
+          strokeLinecap="round"
+          strokeDasharray={`${value * 100} ${100 - value * 100}`}
+          transform={`rotate(-90 ${x} ${y})`}
+        />
+      )}
+    </g>
+  );
+}
 function Picker({
   items,
   value,
@@ -110,15 +225,29 @@ function Picker({
   label,
   placeholder,
 }: {
-  items: { id: string; name: string }[];
+  items: SearchItem[];
   value: string | null;
   onChange: (v: string | null) => void;
   label: string;
   placeholder: string;
 }) {
+  const [search, setSearch] = useState('');
+  const deferredSearch = useDeferredValue(search);
+  const filtered = useMemo(
+    () =>
+      items
+        .map((item) => ({ item, score: titleScore(item, deferredSearch) }))
+        .filter((x) => x.score >= 0.025)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 50)
+        .map((x) => x.item),
+    [items, deferredSearch],
+  );
   return (
     <Combobox
       items={items}
+      filteredItems={filtered}
+      onInputValueChange={setSearch}
       value={items.find((x) => x.id === value) ?? null}
       onValueChange={(v) => onChange(v?.id ?? null)}
       itemToStringLabel={(v) => v.name}
@@ -156,9 +285,17 @@ export default function Home() {
     [plannedLevel, setPlannedLevel] = useState(4),
     [zone, setZone] = useState(0);
   const [criteria, setCriteria] = useState<Criteria>(DEFAULT_CRITERIA);
+  const [background, setBackground] = useState<Background>(EMPTY_BACKGROUND);
+  const deferredBackground = useDeferredValue(background);
+  const [abilities, setAbilities] = useState<Profile>({});
+  const [aiOverlay, setAiOverlay] = useState(true),
+    [aiMetric, setAiMetric] = useState<AIMetric>('observed'),
+    [aiThreshold, setAiThreshold] = useState(30),
+    [layout, setLayout] = useState('map');
   const [query, setQuery] = useState(''),
     [cluster, setCluster] = useState<number | null>(null),
     [color, setColor] = useState('cluster');
+  const searchQuery = useDeferredValue(query);
   const [percentile, setPercentile] = useState(2),
     [unit, setUnit] = useState<'annual' | 'hourly'>('annual');
   const [selected, setSelected] = useState<string | null>(null),
@@ -188,10 +325,10 @@ export default function Home() {
       });
     return () => c.abort();
   }, []);
-  const occupations = data?.occupations ?? [];
+  const occupations = useMemo(() => data?.occupations ?? [], [data]);
   const byId = useMemo(
     () => new Map(occupations.map((o) => [o.id, o])),
-    [data],
+    [occupations],
   );
   const currentRole = role ? byId.get(role) : null;
   const skillItems = useMemo(
@@ -199,9 +336,43 @@ export default function Home() {
     [data],
   );
   const roleItems = useMemo(
-    () => occupations.map((o) => ({ id: o.id, name: o.title })),
+    () =>
+      occupations.map((o) => ({ id: o.id, name: o.title, aliases: o.aliases })),
+    [occupations],
+  );
+  const abilityItems = useMemo(
+    () =>
+      data?.abilities.map((a, i) => ({ id: String(i), name: a.name })) ?? [],
     [data],
   );
+  const overlaps = useMemo(
+    () =>
+      new Map(
+        occupations.map((o) => [
+          o.id,
+          backgroundOverlap(o, deferredBackground),
+        ]),
+      ),
+    [occupations, deferredBackground],
+  );
+  const backgroundSkills = useMemo(() => {
+    const related = occupations
+      .filter((o) => (overlaps.get(o.id)?.length ?? 0) > 0)
+      .sort((a, b) => overlaps.get(b.id)!.length - overlaps.get(a.id)!.length)
+      .slice(0, 3);
+    return related
+      .flatMap((o) =>
+        o.importance
+          .map((v, i) => ({ i, v: v ?? 0, role: o.title }))
+          .sort((a, b) => b.v - a.v)
+          .slice(0, 3),
+      )
+      .filter(
+        (s, i, a) =>
+          profile[s.i] === undefined && a.findIndex((x) => x.i === s.i) === i,
+      )
+      .slice(0, 5);
+  }, [occupations, overlaps, profile]);
   const effectiveProfile = useMemo(
     () =>
       planned === null
@@ -215,12 +386,12 @@ export default function Home() {
   const scores = useMemo(
     () =>
       new Map(occupations.map((o) => [o.id, alignment(o, effectiveProfile)])),
-    [data, effectiveProfile],
+    [occupations, effectiveProfile],
   );
   const hasProfile = Object.keys(profile).length > 0 || planned !== null;
   const visible = useMemo(
-    () => occupations.filter((o) => matches(o, query, cluster, zone)),
-    [data, query, cluster, zone],
+    () => searchOccupations(occupations, searchQuery, cluster, zone),
+    [occupations, searchQuery, cluster, zone],
   );
   const visibleIds = useMemo(
     () => new Set(visible.map((o) => o.id)),
@@ -231,22 +402,59 @@ export default function Home() {
       new Map(
         occupations.map((o) => [
           o.id,
-          pathQuality(o, effectiveProfile, criteria, percentile),
+          pathQuality(
+            o,
+            effectiveProfile,
+            criteria,
+            percentile,
+            abilities,
+            data?.abilities,
+          ),
         ]),
       ),
-    [data, effectiveProfile, criteria, percentile],
+    [occupations, data, effectiveProfile, criteria, percentile, abilities],
   );
   const ranked = useMemo(
     () =>
       [...visible].sort((a, b) =>
-        mode === 'career' && hasProfile
+        mode === 'career'
           ? QUALITY[quality.get(b.id)!.status].order -
               QUALITY[quality.get(a.id)!.status].order ||
-            (scores.get(b.id)?.score ?? -1) - (scores.get(a.id)?.score ?? -1)
-          : a.title.localeCompare(b.title),
+            (scores.get(b.id)?.score ?? -1) - (scores.get(a.id)?.score ?? -1) ||
+            (overlaps.get(b.id)?.length ?? 0) -
+              (overlaps.get(a.id)?.length ?? 0)
+          : 0,
       ),
-    [visible, mode, hasProfile, scores, quality],
+    [visible, mode, scores, quality, overlaps],
   );
+  const isTree = mode === 'career' && layout === 'tree';
+  const branches = useMemo(
+    () =>
+      [...new Set(ranked.map((o) => o.cluster))].slice(0, 4).map((id) => ({
+        id,
+        roles: ranked.filter((o) => o.cluster === id).slice(0, 3),
+      })),
+    [ranked],
+  );
+  const treePositions = new Map(
+    branches.flatMap((b, bi) =>
+      b.roles.map(
+        (o, i) => [o.id, { x: 620, y: 100 + bi * 175 + i * 48 }] as const,
+      ),
+    ),
+  );
+  const mapOccupations = isTree
+    ? branches.flatMap((b) => b.roles)
+    : occupations;
+  const strongPaths = visible.filter(
+    (o) => quality.get(o.id)?.status === 'strong',
+  );
+  const exposedPaths = strongPaths.filter(
+    (o) => (aiValue(o, aiMetric) ?? -1) * 100 >= aiThreshold,
+  ).length;
+  const unknownAIPaths = strongPaths.filter(
+    (o) => aiValue(o, aiMetric) === null,
+  ).length;
   const improved = useMemo(
     () =>
       planned === null
@@ -370,13 +578,13 @@ export default function Home() {
   return (
     <main className={`atlas ${collapsed ? 'panel-hidden' : ''}`}>
       <header className="topbar">
-        <a className="brand" href="/" aria-label="Atlas home">
+        <Link className="brand" href="/" aria-label="Atlas home">
           <Orbit size={28} />
           <span>
             atlas<span className="brand-dot">.</span>
           </span>
           <span className="brand-caption">A WORLD OF POSSIBILITIES</span>
-        </a>
+        </Link>
         <Tabs
           value={mode}
           onValueChange={(v) => {
@@ -421,25 +629,61 @@ export default function Home() {
         </p>
       </div>
       <div className="map-toolbar">
-        <span>Color by</span>
-        <Tabs value={color} onValueChange={(v) => setColor(String(v))}>
-          <TabsList className="color-switch">
-            <TabsTrigger value="cluster">
-              <Layers />
-              Cluster
-            </TabsTrigger>
-            <TabsTrigger value="pay">
-              <DollarSign />
-              Pay
-            </TabsTrigger>
-            {mode === 'career' && (
-              <TabsTrigger value="quality">
-                <Compass />
-                Path quality
+        {isTree ? (
+          <span className="tree-color-label">Core & branch: path quality</span>
+        ) : (
+          <>
+            <span>Color by</span>
+            <Tabs value={color} onValueChange={(v) => setColor(String(v))}>
+              <TabsList className="color-switch">
+                <TabsTrigger value="cluster">
+                  <Layers />
+                  Cluster
+                </TabsTrigger>
+                <TabsTrigger value="pay">
+                  <DollarSign />
+                  Pay
+                </TabsTrigger>
+                {mode === 'career' && (
+                  <TabsTrigger value="quality">
+                    <Compass />
+                    Path quality
+                  </TabsTrigger>
+                )}
+              </TabsList>
+            </Tabs>
+          </>
+        )}
+        {mode === 'career' && (
+          <Tabs
+            value={layout}
+            onValueChange={(v) => {
+              setLayout(String(v));
+              setFocusIndex(0);
+              setView({ x: 0, y: 0, k: 1 });
+            }}
+          >
+            <TabsList className="color-switch">
+              <TabsTrigger value="map">
+                <Orbit />
+                Map
               </TabsTrigger>
-            )}
-          </TabsList>
-        </Tabs>
+              <TabsTrigger value="tree">
+                <GitBranch />
+                Possibility tree
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
+        <label className="ai-toggle" htmlFor="ai-map-toggle">
+          <Switch
+            id="ai-map-toggle"
+            checked={aiOverlay}
+            onCheckedChange={setAiOverlay}
+            aria-label="Show AI exposure rings"
+          />
+          AI rings
+        </label>
       </div>
       <aside
         className={`floating-panel ${collapsed ? 'collapsed' : ''}`}
@@ -530,7 +774,152 @@ export default function Home() {
               )}
             </Bubble>
             <Bubble
-              step={`02 · YOUR SKILLS${Object.keys(profile).length ? ` · ${Object.keys(profile).length} ADDED` : ''}`}
+              step="02 · YOUR WHOLE PICTURE"
+              title="More than a job title."
+              subtitle="Bring your education, interests, training, and abilities into the picture."
+              open={phase === 5}
+              onOpenChange={(v) => setPhase(v ? 5 : 0)}
+            >
+              <div className="field-label">Highest education level</div>
+              <Select
+                value={String(criteria.education)}
+                onValueChange={(v) =>
+                  setCriteria((c) => ({ ...c, education: Number(v) }))
+                }
+              >
+                <SelectTrigger
+                  className="full-select"
+                  aria-label="Highest education level"
+                >
+                  <SelectValue>{EDUCATION[criteria.education]}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {EDUCATION.map((label, i) => (
+                    <SelectItem key={i} value={String(i)}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {BACKGROUND_FIELDS.map((field) => (
+                <div key={field.key}>
+                  <label
+                    className="field-label"
+                    htmlFor={`background-${field.key}`}
+                  >
+                    {field.label}
+                  </label>
+                  <div className="input-shell">
+                    <input
+                      id={`background-${field.key}`}
+                      value={background[field.key]}
+                      maxLength={500}
+                      placeholder={field.placeholder}
+                      onChange={(e) =>
+                        setBackground((b) => ({
+                          ...b,
+                          [field.key]: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              ))}
+              <p className="microcopy">
+                Interest keywords help order similar paths. School/provider and
+                physical notes stay as personal context. Credentials and
+                proficiency need your confirmation. Profile entries stay in this
+                tab.
+              </p>
+              {backgroundSkills.length > 0 && (
+                <div className="background-suggestions">
+                  <div className="section-label">Skills to consider</div>
+                  <p className="microcopy">
+                    From roles related to your interests. Add only skills you
+                    have, then adjust the suggested starting level.
+                  </p>
+                  {backgroundSkills.map((s) => (
+                    <button
+                      className="suggestion-row"
+                      key={s.i}
+                      onClick={() => {
+                        setProfile((p) => ({ ...p, [s.i]: 3 }));
+                        setPhase(2);
+                      }}
+                    >
+                      <span>
+                        {data?.skills[s.i].name}
+                        <small>Related role: {s.role}</small>
+                      </span>
+                      <Plus size={14} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="field-label">
+                Physical, athletic & cognitive abilities
+              </div>
+              <Picker
+                items={abilityItems.filter(
+                  (a) => abilities[a.id] === undefined,
+                )}
+                value={null}
+                label="Add an ability to assess"
+                placeholder="Stamina, strength, dexterity, reasoning…"
+                onChange={(id) => {
+                  if (id !== null) setAbilities((a) => ({ ...a, [id]: 3 }));
+                }}
+              />
+              <div className="skill-list">
+                {Object.entries(abilities).map(([id, level]) => (
+                  <div className="skill-row" key={id}>
+                    <div>
+                      <label id={`ability-${id}`}>
+                        {data?.abilities[Number(id)].name}
+                      </label>
+                      <span>{level.toFixed(1)}</span>
+                      <button
+                        className="icon-button"
+                        aria-label={`Remove ${data?.abilities[Number(id)].name}`}
+                        onClick={() =>
+                          setAbilities((a) => {
+                            const next = { ...a };
+                            delete next[id];
+                            return next;
+                          })
+                        }
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                    <Slider
+                      aria-labelledby={`ability-${id}`}
+                      min={0}
+                      max={7}
+                      step={0.5}
+                      value={[level]}
+                      onValueChange={(v) =>
+                        setAbilities((a) => ({
+                          ...a,
+                          [id]: Array.isArray(v) ? v[0] : v,
+                        }))
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="microcopy">
+                Optional self-ratings from 0–7, using your usual supports. Gaps
+                flag demands to review; accommodations and the actual workplace
+                can change those demands.
+              </p>
+              <button className="primary-button" onClick={() => setPhase(2)}>
+                Continue to skills
+                <ArrowUpRight size={16} />
+              </button>
+            </Bubble>
+            <Bubble
+              step={`03 · YOUR SKILLS${Object.keys(profile).length ? ` · ${Object.keys(profile).length} ADDED` : ''}`}
               title="What can you do?"
               subtitle="Estimate your level from 0–7. Unrated skills stay unknown."
               open={phase === 2}
@@ -607,7 +996,7 @@ export default function Home() {
               )}
             </Bubble>
             <Bubble
-              step="03 · YOUR NEXT CHAPTER"
+              step="04 · YOUR NEXT CHAPTER"
               title="What could you unlock?"
               subtitle="Try adding a skill. Watch your alignment change."
               open={phase === 3}
@@ -652,7 +1041,7 @@ export default function Home() {
                   </button>
                 </div>
               )}
-              <label className="field-label">Preparation you’re open to</label>
+              <div className="field-label">Preparation you’re open to</div>
               <Select
                 value={String(zone)}
                 onValueChange={(v) => setZone(Number(v))}
@@ -680,51 +1069,12 @@ export default function Home() {
               </p>
             </Bubble>
             <Bubble
-              step="04 · YOUR GUARDRAILS"
+              step="05 · YOUR GUARDRAILS"
               title="What makes a good next move?"
               subtitle="Set your own thresholds. Flag potential underemployment and weaker outcomes."
               open={phase === 4}
               onOpenChange={(v) => setPhase(v ? 4 : 0)}
             >
-              <label className="field-label">Your highest education</label>
-              <Select
-                value={String(criteria.education)}
-                onValueChange={(v) =>
-                  setCriteria((c) => ({ ...c, education: Number(v) }))
-                }
-              >
-                <SelectTrigger
-                  className="full-select"
-                  aria-label="Highest education"
-                >
-                  <SelectValue>
-                    {
-                      [
-                        'Not provided',
-                        'No degree / high school',
-                        'Some college',
-                        'Associate / vocational',
-                        'Bachelor’s degree',
-                        'Master’s / PhD / professional',
-                      ][criteria.education]
-                    }
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {[
-                    'Not provided',
-                    'No degree / high school',
-                    'Some college',
-                    'Associate / vocational',
-                    'Bachelor’s degree',
-                    'Master’s / PhD / professional',
-                  ].map((label, i) => (
-                    <SelectItem key={i} value={String(i)}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
               <label className="field-label" htmlFor="salary-target">
                 Minimum annual pay target ($)
               </label>
@@ -750,7 +1100,7 @@ export default function Home() {
               </div>
               <div className="criteria-range">
                 <div className="label-value">
-                  <label id="fit-label">Minimum skill alignment</label>
+                  <span id="fit-label">Minimum skill alignment</span>
                   <strong>{criteria.minFit}/100</strong>
                 </div>
                 <Slider
@@ -835,7 +1185,8 @@ export default function Home() {
                   Possibilities to explore<span>{visible.length}</span>
                 </div>
                 <p className="microcopy">
-                  Ranked by your guardrails, then skill alignment.
+                  Ranked by your guardrails, skill alignment, then interest
+                  overlap.
                 </p>
                 {ranked.slice(0, 5).map((o) => (
                   <button
@@ -861,6 +1212,11 @@ export default function Home() {
                       >
                         {QUALITY[quality.get(o.id)!.status].label}
                       </small>
+                      {aiOverlay && (
+                        <small className="ai-text">
+                          {aiLabel(o, aiMetric)}
+                        </small>
+                      )}
                     </span>
                     <strong>
                       {scores.get(o.id)?.score ?? '—'}
@@ -882,7 +1238,8 @@ export default function Home() {
                   aria-label="Search occupations or tasks"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search titles, codes, or tasks…"
+                  placeholder="Title, alias, typo, code, or task…"
+                  maxLength={160}
                 />
                 {query && (
                   <button
@@ -944,12 +1301,101 @@ export default function Home() {
               )}
               {!visible.length && (
                 <p className="empty-hint">
-                  No occupations match. Try another task or clear your filters.
+                  No close titles or tasks match. Try a shorter phrase or clear
+                  your filters.
                 </p>
               )}
             </div>
           </>
         )}
+        <Bubble
+          step="AI · EXPOSURE LENS"
+          title="Where does AI overlap?"
+          subtitle="Red marks exposure to AI. The center keeps your career fit visible."
+          open={phase === 6}
+          onOpenChange={(v) => setPhase(v ? 6 : 0)}
+        >
+          <label className="ai-toggle" htmlFor="ai-panel-toggle">
+            <Switch
+              id="ai-panel-toggle"
+              checked={aiOverlay}
+              onCheckedChange={setAiOverlay}
+              aria-label="Enable AI overlay"
+            />
+            Show exposure rings
+          </label>
+          <div className="field-label">Published measure</div>
+          <Select
+            value={aiMetric}
+            onValueChange={(v) => setAiMetric(v as AIMetric)}
+          >
+            <SelectTrigger
+              className="full-select"
+              aria-label="AI exposure dataset"
+            >
+              <SelectValue>{AI_SOURCES[aiMetric].name}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(AI_SOURCES).map(([id, source]) => (
+                <SelectItem value={id} key={id}>
+                  {source.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="microcopy">
+            {AI_SOURCES[aiMetric].date} · {AI_SOURCES[aiMetric].description}
+          </p>
+          <div className="criteria-range">
+            <div className="label-value">
+              <span id="ai-threshold">Highlight from index</span>
+              <strong>{aiThreshold}/100</strong>
+            </div>
+            <Slider
+              aria-labelledby="ai-threshold"
+              min={0}
+              max={100}
+              step={5}
+              value={[aiThreshold]}
+              onValueChange={(v) => setAiThreshold(Array.isArray(v) ? v[0] : v)}
+            />
+          </div>
+          <p className="microcopy">
+            Your comparison threshold, not a research-defined danger cutoff. It
+            highlights rings without changing career scores.
+          </p>
+          {mode === 'career' && (
+            <div className="ai-overlap-summary" aria-live="polite">
+              <strong>
+                {exposedPaths}{' '}
+                <small>
+                  of {strongPaths.length} strong paths at or above this AI index
+                </small>
+              </strong>
+              <span>
+                {unknownAIPaths} strong paths have no score from this source.
+              </span>
+            </div>
+          )}
+          <p className="microcopy">
+            A larger red arc means a higher index. Zero means zero measured
+            exposure; a dashed ring means missing data. These scores do not give
+            a probability of job loss.
+          </p>
+          <a
+            className="source-link"
+            href={AI_SOURCES[aiMetric].source}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Read the study
+            <ExternalLink size={12} />
+          </a>
+          <button className="text-button" onClick={() => setAbout(true)}>
+            Compare sources & limitations
+            <ChevronRight size={14} />
+          </button>
+        </Bubble>
       </aside>
       {collapsed && (
         <button
@@ -962,7 +1408,29 @@ export default function Home() {
           <ChevronRight size={15} />
         </button>
       )}
-      <section className="map-stage" aria-label="Interactive occupation map">
+      <section
+        className={`map-stage ${isTree ? 'tree-stage' : ''}`}
+        aria-label="Interactive occupation map"
+      >
+        {data && (
+          <div className="map-caption">
+            {isTree
+              ? `${mapOccupations.length} example paths across ${branches.length} clusters · grouping, not a hiring forecast`
+              : 'Nearby occupations share responsibilities'}
+            {aiOverlay && (
+              <button
+                onClick={() => {
+                  setCollapsed(false);
+                  setPhase(6);
+                }}
+              >
+                <ShieldAlert size={12} />
+                {AI_SOURCES[aiMetric].name} · red arcs
+                <ChevronRight size={12} />
+              </button>
+            )}
+          </div>
+        )}
         {error ? (
           <div className="map-message">
             <Info />
@@ -1026,65 +1494,150 @@ export default function Home() {
             </defs>
             <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
               <g className="connections" aria-hidden="true">
-                {occupations.flatMap((o) =>
-                  o.neighbors
-                    .slice(0, 2)
-                    .filter(
-                      ([id, sim]) =>
-                        id > o.id &&
-                        sim > 0.13 &&
-                        visibleIds.has(id) &&
-                        visibleIds.has(o.id),
-                    )
-                    .map(([id]) => {
-                      const target = byId.get(id)!;
-                      const a = point(o),
-                        b = point(target);
-                      return (
-                        <line
-                          key={o.id + id}
-                          x1={a.x}
-                          y1={a.y}
-                          x2={b.x}
-                          y2={b.y}
-                          stroke={COLORS[o.cluster]}
-                          strokeWidth={0.65 / view.k}
-                          opacity={
-                            hovered === o.id || hovered === id ? 0.65 : 0.12
-                          }
-                        />
-                      );
-                    }),
-                )}
+                {!isTree &&
+                  occupations.flatMap((o) =>
+                    o.neighbors
+                      .slice(0, 2)
+                      .filter(
+                        ([id, sim]) =>
+                          id > o.id &&
+                          sim > 0.13 &&
+                          visibleIds.has(id) &&
+                          visibleIds.has(o.id),
+                      )
+                      .map(([id]) => {
+                        const target = byId.get(id)!;
+                        const a = point(o),
+                          b = point(target);
+                        return (
+                          <line
+                            key={o.id + id}
+                            x1={a.x}
+                            y1={a.y}
+                            x2={b.x}
+                            y2={b.y}
+                            stroke={COLORS[o.cluster]}
+                            strokeWidth={0.65 / view.k}
+                            opacity={
+                              hovered === o.id || hovered === id ? 0.65 : 0.12
+                            }
+                          />
+                        );
+                      }),
+                  )}
               </g>
-              {data.clusters.map((c) => {
-                const p = point(c);
-                return (
-                  <g
-                    key={c.id}
-                    className="cluster-label"
-                    transform={`translate(${p.x},${p.y - 35})`}
-                    opacity={cluster === null || cluster === c.id ? 1 : 0.12}
-                    aria-hidden="true"
-                  >
-                    <text
-                      textAnchor="middle"
-                      fill={COLORS[c.id]}
-                      style={{ fontSize: `${12 / Math.sqrt(view.k)}px` }}
+              {!isTree &&
+                data.clusters.map((c) => {
+                  const p = point(c);
+                  return (
+                    <g
+                      key={c.id}
+                      className="cluster-label"
+                      transform={`translate(${p.x},${p.y - 35})`}
+                      opacity={cluster === null || cluster === c.id ? 1 : 0.12}
+                      aria-hidden="true"
                     >
-                      {CLUSTER_NAMES[c.id]}
-                    </text>
-                  </g>
-                );
-              })}
-              {occupations.map((o, i) => {
-                const p = point(o),
+                      <text
+                        textAnchor="middle"
+                        fill={COLORS[c.id]}
+                        style={{ fontSize: `${12 / Math.sqrt(view.k)}px` }}
+                      >
+                        {CLUSTER_NAMES[c.id]}
+                      </text>
+                    </g>
+                  );
+                })}
+              {isTree && (
+                <g className="tree-branches" aria-hidden="true">
+                  <circle
+                    cx={100}
+                    cy={390}
+                    r={28}
+                    fill="#282439"
+                    stroke="#aa95d0"
+                  />
+                  <text
+                    x={100}
+                    y={445}
+                    textAnchor="middle"
+                    fill="#e7def4"
+                    fontSize={18}
+                  >
+                    Your profile
+                  </text>
+                  <text
+                    x={100}
+                    y={467}
+                    textAnchor="middle"
+                    fill="#a099b1"
+                    fontSize={12}
+                  >
+                    {Object.keys(profile).length} skills rated
+                  </text>
+                  {branches.map((b, bi) => {
+                    const y = 148 + bi * 175;
+                    return (
+                      <g key={b.id}>
+                        <path
+                          d={`M128 390 C220 390 210 ${y} 325 ${y}`}
+                          fill="none"
+                          stroke={COLORS[b.id]}
+                          strokeWidth={1.4}
+                          opacity={0.35}
+                        />
+                        <circle cx={325} cy={y} r={7} fill={COLORS[b.id]} />
+                        <text
+                          x={325}
+                          y={y - 33}
+                          textAnchor="middle"
+                          fill={COLORS[b.id]}
+                          fontSize={15}
+                        >
+                          {CLUSTER_NAMES[b.id]}
+                        </text>
+                        {b.roles.map((o) => {
+                          const p = treePositions.get(o.id)!;
+                          const path = `M333 ${y} C435 ${y} 500 ${p.y} ${p.x - 12} ${p.y}`;
+                          const ai = aiValue(o, aiMetric);
+                          return (
+                            <g key={o.id}>
+                              <path
+                                d={path}
+                                fill="none"
+                                stroke={
+                                  QUALITY[quality.get(o.id)!.status].color
+                                }
+                                strokeWidth={2.4}
+                                opacity={0.6}
+                              />
+                              {aiOverlay && ai !== null && (
+                                <path
+                                  d={path}
+                                  fill="none"
+                                  stroke="#e34264"
+                                  strokeWidth={3}
+                                  pathLength={100}
+                                  strokeDasharray={`0 ${100 - ai * 100} ${ai * 100} 0`}
+                                  opacity={ai * 100 >= aiThreshold ? 0.85 : 0.4}
+                                />
+                              )}
+                            </g>
+                          );
+                        })}
+                      </g>
+                    );
+                  })}
+                </g>
+              )}
+              {mapOccupations.map((o, i) => {
+                const p = isTree ? treePositions.get(o.id)! : point(o),
                   score = scores.get(o.id)?.score ?? 0;
                 const bright =
                   mode === 'career' && hasProfile && color !== 'quality';
                 const active = selected === o.id || hovered === o.id;
-                const fill =
-                  color === 'pay'
+                const fill = isTree
+                  ? QUALITY[quality.get(o.id)!.status].color
+                  : color === 'pay'
                     ? payColor(wageAt(o, percentile, unit), unit)
                     : color === 'quality'
                       ? QUALITY[quality.get(o.id)!.status].color
@@ -1099,8 +1652,12 @@ export default function Home() {
                     key={o.id}
                     data-occupation={o.id}
                     role="button"
-                    tabIndex={focusIndex === i ? 0 : -1}
-                    aria-label={`${o.title}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}`}
+                    tabIndex={
+                      Math.min(focusIndex, mapOccupations.length - 1) === i
+                        ? 0
+                        : -1
+                    }
+                    aria-label={`${o.title}, ${QUALITY[quality.get(o.id)!.status].label}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}${aiOverlay ? `, ${aiLabel(o, aiMetric)}` : ''}`}
                     className="occupation-node"
                     onFocus={() => {
                       setFocusIndex(i);
@@ -1122,18 +1679,31 @@ export default function Home() {
                             (e.key === 'ArrowRight' || e.key === 'ArrowDown'
                               ? 1
                               : -1) +
-                            occupations.length) %
-                          occupations.length;
+                            mapOccupations.length) %
+                          mapOccupations.length;
                         setFocusIndex(next);
                         (
                           svgRef.current?.querySelector(
-                            `[data-occupation="${occupations[next].id}"]`,
+                            `[data-occupation="${mapOccupations[next].id}"]`,
                           ) as SVGGElement
                         )?.focus();
                       }
                     }}
-                    style={{ opacity }}
+                    style={{ opacity: !visibleIds.has(o.id) ? 0.065 : 1 }}
                   >
+                    <title>
+                      {o.title}
+                      {aiOverlay ? ` · ${aiLabel(o, aiMetric)}` : ''}
+                    </title>
+                    {aiOverlay && (
+                      <ExposureRing
+                        x={p.x}
+                        y={p.y}
+                        radius={(isTree ? 10 : 6.8) / Math.sqrt(view.k)}
+                        value={aiValue(o, aiMetric)}
+                        threshold={aiThreshold}
+                      />
+                    )}
                     {(active || (bright && score >= 90)) && (
                       <circle
                         cx={p.x}
@@ -1156,7 +1726,34 @@ export default function Home() {
                       cy={p.y}
                       r={(active ? 5.5 : 3.1) / Math.sqrt(view.k)}
                       fill={fill}
+                      opacity={isTree ? 1 : opacity}
                     />
+                    {isTree && (
+                      <>
+                        <text
+                          x={p.x + 24}
+                          y={p.y - 3}
+                          fill="#eee7f3"
+                          fontSize={16}
+                        >
+                          {o.title.length > 48
+                            ? `${o.title.slice(0, 47)}…`
+                            : o.title}
+                        </text>
+                        <text
+                          x={p.x + 24}
+                          y={p.y + 17}
+                          fill={QUALITY[quality.get(o.id)!.status].color}
+                          fontSize={12}
+                        >
+                          {QUALITY[quality.get(o.id)!.status].label} ·{' '}
+                          {money(wageAt(o, percentile, unit), true, unit)}
+                          {aiOverlay
+                            ? ` · AI ${aiValue(o, aiMetric) === null ? '—' : `${(aiValue(o, aiMetric)! * 100).toFixed(1)}/100`}`
+                            : ''}
+                        </text>
+                      </>
+                    )}
                     {active && (
                       <circle
                         cx={p.x}
@@ -1193,6 +1790,9 @@ export default function Home() {
             {CLUSTER_NAMES[hover.cluster]}
           </div>
           <strong>{hover.title}</strong>
+          {aiOverlay && (
+            <span className="ai-text">{aiLabel(hover, aiMetric)}</span>
+          )}
           {mode === 'career' && (
             <span
               className="quality-badge"
@@ -1299,14 +1899,19 @@ export default function Home() {
         </div>
         <div className="pay-dock-bottom">
           <span>Wages, not total compensation or an earnings forecast.</span>
-          <button onClick={() => setColor(color === 'pay' ? 'cluster' : 'pay')}>
+          <button
+            onClick={() => {
+              setLayout('map');
+              setColor(color === 'pay' ? 'cluster' : 'pay');
+            }}
+          >
             {color === 'pay' ? <Check size={12} /> : <Layers size={12} />}Pay on
             map
           </button>
         </div>
       </div>
       <div className="map-legend">
-        {color === 'quality' ? (
+        {color === 'quality' || isTree ? (
           Object.entries(QUALITY).map(([key, q]) => (
             <span className="quality-legend-item" key={key}>
               <i style={{ background: q.color }} />
@@ -1335,6 +1940,12 @@ export default function Home() {
             <span className="legend-line" />
             Shared responsibilities
           </>
+        )}
+        {aiOverlay && (
+          <span className="ai-legend">
+            <i />
+            Red arc = AI index · dashed = unavailable
+          </span>
         )}
       </div>
       <footer>
@@ -1388,6 +1999,142 @@ export default function Home() {
                   </span>
                 </div>
               </div>
+              <div className="detail-section ai-detail">
+                <div className="section-label">
+                  <ShieldAlert size={14} />
+                  AI exposure & applicability
+                </div>
+                {(['observed', 'applicability'] as AIMetric[]).map((metric) => {
+                  const v = aiValue(detail, metric),
+                    source = AI_SOURCES[metric];
+                  return (
+                    <div className="ai-measure" key={metric}>
+                      <div className="label-value">
+                        <span>{source.name}</span>
+                        <strong>
+                          {v === null
+                            ? 'Not reported'
+                            : `${(v * 100).toFixed(1)} / 100`}
+                        </strong>
+                      </div>
+                      <div
+                        className="ai-meter"
+                        role="img"
+                        aria-label={aiLabel(detail, metric)}
+                      >
+                        <i style={{ width: `${(v ?? 0) * 100}%` }} />
+                      </div>
+                      <p className="microcopy">
+                        {source.date} · {source.description}
+                      </p>
+                      <a
+                        className="source-link"
+                        href={source.source}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {metric === 'observed'
+                          ? 'Anthropic · Massenkoff & McCrory'
+                          : 'Microsoft · Tomlinson et al.'}
+                        <ExternalLink size={12} />
+                      </a>
+                    </div>
+                  );
+                })}
+                <p className="microcopy">
+                  Scores are separate indices with different definitions, not
+                  comparable percentages of jobs lost. Inherited SOC group:{' '}
+                  {detail.ai?.soc ?? 'unavailable'} ·{' '}
+                  {detail.ai?.observedTitle ??
+                    detail.ai?.applicabilityTitle ??
+                    'No matched group'}
+                  . Specialized roles share their group’s score.
+                </p>
+                <div className="section-label">
+                  Latest usage snapshot<span>May 2026</span>
+                </div>
+                <p className="microcopy">
+                  Anthropic’s June 26, 2026 release · global Claude chat and
+                  Cowork use linked to this occupation’s tasks.
+                </p>
+                <div className="outlook-grid">
+                  <div>
+                    <strong>
+                      {detail.ai?.usage?.collaboration_bucket_automation_pct ==
+                      null
+                        ? '—'
+                        : `${detail.ai.usage.collaboration_bucket_automation_pct.toFixed(1)}%`}
+                    </strong>
+                    <span>Automation usage</span>
+                  </div>
+                  <div>
+                    <strong>
+                      {detail.ai?.usage
+                        ?.collaboration_bucket_augmentation_pct == null
+                        ? '—'
+                        : `${detail.ai.usage.collaboration_bucket_augmentation_pct.toFixed(1)}%`}
+                    </strong>
+                    <span>Augmentative usage</span>
+                  </div>
+                </div>
+                <p className="microcopy">
+                  Shares of measured AI interactions for these tasks, not shares
+                  of workers or all work. Unpublished cells stay unknown. This
+                  snapshot does not update the March exposure index.
+                </p>
+                <a
+                  className="source-link"
+                  href="https://www.anthropic.com/research/economic-index-june-2026-report"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  June 2026 Economic Index
+                  <ExternalLink size={12} />
+                </a>
+              </div>
+              {(Object.values(background).some(Boolean) ||
+                Object.keys(abilities).length > 0) && (
+                <div className="detail-section">
+                  <div className="section-label">
+                    Your background connections
+                  </div>
+                  <p className="microcopy">
+                    {overlaps.get(detail.id)?.length
+                      ? `Shared interest keywords: ${overlaps.get(detail.id)!.join(', ')}. This is interest affinity, not verified proficiency.`
+                      : 'No direct interest keyword overlap with this role. Your rated skills still determine alignment.'}
+                  </p>
+                  {background.source && (
+                    <p className="microcopy">
+                      Education source: {background.source}
+                      {background.major ? ` · ${background.major}` : ''}. Source
+                      prestige is not scored.
+                    </p>
+                  )}
+                  {background.physical && (
+                    <p className="microcopy">
+                      Your physical capability / support notes:{' '}
+                      {background.physical}
+                    </p>
+                  )}
+                  {Object.entries(abilities).map(([id, level]) => (
+                    <div className="ability-comparison" key={id}>
+                      <span>{data?.abilities[Number(id)].name}</span>
+                      <span>
+                        You {level}/7 · Role{' '}
+                        {detail.abilities?.[Number(id)] ?? '—'}/7
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!!detail.aliases?.length && (
+                <details className="detail-section alias-details">
+                  <summary>
+                    {detail.aliases.length} alternate job titles
+                  </summary>
+                  <p className="microcopy">{detail.aliases.join(' · ')}</p>
+                </details>
+              )}
               <div className="detail-section outcome-section">
                 <div className="section-label">
                   Your outcome assessment
@@ -1706,6 +2453,101 @@ export default function Home() {
             likelihood. Raising a salary percentile changes a wage scenario, not
             your probability of achieving it.
           </p>
+          <h3>Two layers: possibility and AI exposure.</h3>
+          <p>
+            The map groups tasks; the possibility tree samples up to three
+            leading roles in each of four leading clusters under your filters.
+            Tree branches show those groups, not a sequence of guaranteed
+            transitions. Node centers and base branches show outcome quality.
+            Red rings and red branch segments show the chosen AI index, from
+            0–100. Gray dashed rings mean missing data.
+          </p>
+          <p>
+            Red highlights start at your adjustable cutoff, initially 30/100.
+            That is a visual comparison setting, not a validated danger
+            threshold. AI exposure is not subtracted from your career score,
+            pay, or hiring likelihood.
+          </p>
+          <p>
+            Research checked September 8, 2026. The latest Anthropic Economic
+            Index release listed in its official repository was June 26, 2026,
+            covering April and May usage. We show its May global Claude
+            chat/Cowork automation and augmentation shares in role details. They
+            describe AI interactions, not total occupational work.
+          </p>
+          <a
+            href="https://huggingface.co/datasets/Anthropic/EconomicIndex/blob/main/release_2026_06_26/data_documentation.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            June release definitions
+            <ExternalLink size={13} />
+          </a>
+          <p>
+            The occupation overlay uses Massenkoff & McCrory’s March 5, 2026
+            observed-exposure dataset (
+            {
+              data?.occupations.filter((o) => aiValue(o, 'observed') !== null)
+                .length
+            }{' '}
+            mapped roles). The paper combines theoretical task feasibility and
+            measured professional Claude use, weighting automation more than
+            augmentation. Its study found no systematic rise in unemployment for
+            more exposed workers, with suggestive evidence of slower hiring of
+            younger workers.
+          </p>
+          <a href={AI_SOURCES.observed.source} target="_blank" rel="noreferrer">
+            Anthropic · Labor market impacts of AI
+            <ExternalLink size={13} />
+          </a>
+          <p>
+            The alternative is Tomlinson, Jaffe, Wang, Counts & Suri’s Working
+            with AI, v6, December 22, 2025 (
+            {
+              data?.occupations.filter(
+                (o) => aiValue(o, 'applicability') !== null,
+              ).length
+            }{' '}
+            mapped roles). It combines coverage, completion, and scope across
+            Bing Copilot activity. Applicability includes productive assistance
+            and is not a displacement estimate. These two indices have different
+            definitions and should not be averaged or treated as a time series.
+          </p>
+          <a
+            href={AI_SOURCES.applicability.source}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Microsoft · Working with AI
+            <ExternalLink size={13} />
+          </a>
+          <p>
+            Both indices are joined by exact detailed SOC group codes;
+            specializations inherit the broader group. The May usage snapshot
+            joins exact O*NET codes (
+            {data?.occupations.filter((o) => o.ai?.usage).length} mapped roles).
+            Missing matches stay unknown. These product-specific samples do not
+            represent all employers, AI products, robots, or local labor
+            markets; zero measured exposure does not establish long-term safety.
+          </p>
+          <h3>Search and your broader profile.</h3>
+          <p>
+            Fuzzy search ranks official titles and O*NET alternate titles using
+            subsequence, transposition, and trigram similarity, with exact
+            task-text fallback. It never fuzzy-matches research data to
+            occupations. Education distinguishes master’s, doctorate, and
+            professional degrees, sharing a graduate preparation proxy for the
+            underemployment flag.
+          </p>
+          <p>
+            Major, hobbies, talents, athletic experience, and training
+            contribute keyword affinity as a final ranking tie-breaker and
+            suggest skills for you to confirm. School/provider and physical
+            notes are context only. Optional ability self-ratings are compared
+            with O*NET level ratings; gaps trigger a review of demands,
+            supports, and accommodations. They are not medical assessments or
+            eligibility exclusions.
+          </p>
           <h3>Pay percentiles, clearly defined.</h3>
           <p>
             BLS Occupational Employment and Wage Statistics, May 2025, national
@@ -1738,6 +2580,25 @@ export default function Home() {
             <ExternalLink size={13} />
           </a>
           <h3>Attribution</h3>
+          <p>
+            Anthropic Economic Index data and Microsoft Working with AI results
+            are used under CC BY 4.0. Atlas transforms scores into map overlays
+            and joins them to O*NET occupations. The research authors have not
+            endorsed these visualizations or career assessments.
+          </p>
+          <a href={AI_SOURCES.observed.data} target="_blank" rel="noreferrer">
+            Anthropic source data
+            <ExternalLink size={13} />
+          </a>
+          <a
+            href={AI_SOURCES.applicability.data}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Microsoft source data & attribution
+            <ExternalLink size={13} />
+          </a>
+
           <p>
             Includes information from the{' '}
             <a
