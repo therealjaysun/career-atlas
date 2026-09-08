@@ -78,6 +78,7 @@ import {
   alignment,
   compileSkills,
   pathQuality,
+  careerLandscape,
   QUALITY,
   DEFAULT_CRITERIA,
   type Criteria,
@@ -366,6 +367,7 @@ export default function Home() {
     [plannedLevel, setPlannedLevel] = useState(4),
     [zone, setZone] = useState(0);
   const [criteria, setCriteria] = useState<Criteria>(DEFAULT_CRITERIA);
+  const [showAllPaths, setShowAllPaths] = useState(false);
   const [background, setBackground] = useState<Background>(EMPTY_BACKGROUND);
   const deferredBackground = useDeferredValue(background);
   const [abilities, setAbilities] = useState<Profile>({});
@@ -512,13 +514,18 @@ export default function Home() {
     [occupations, effectiveProfile],
   );
   const hasProfile = Object.keys(profile).length > 0 || planned !== null;
-  const visible = useMemo(
+  const hasDetails =
+    hasProfile ||
+    roles.length > 0 ||
+    Object.values(background).some((value) => value.trim()) ||
+    Object.keys(abilities).length > 0 ||
+    Object.entries(criteria).some(
+      ([key, value]) => value !== DEFAULT_CRITERIA[key as keyof Criteria],
+    );
+  const focusPaths = mode === 'career' && hasDetails && !showAllPaths;
+  const candidates = useMemo(
     () => searchOccupations(occupations, searchQuery, cluster, zone),
     [occupations, searchQuery, cluster, zone],
-  );
-  const visibleIds = useMemo(
-    () => new Set(visible.map((o) => o.id)),
-    [visible],
   );
   const quality = useMemo(
     () =>
@@ -537,6 +544,23 @@ export default function Home() {
       ),
     [occupations, data, effectiveProfile, criteria, percentile, abilities],
   );
+  const landscape = useMemo(
+    () => careerLandscape(candidates, activeClusters, quality, focusPaths),
+    [candidates, activeClusters, quality, focusPaths],
+  );
+  const visible = landscape.occupations;
+  const mapById = useMemo(
+    () => new Map(visible.map((o) => [o.id, o])),
+    [visible],
+  );
+  const hiddenCount = candidates.length - visible.length;
+  const layoutKey = `${basis}:${focusPaths}:${visible.map((o) => o.id).join(',')}`;
+  const [fittedLayout, setFittedLayout] = useState(layoutKey);
+  if (fittedLayout !== layoutKey) {
+    setFittedLayout(layoutKey);
+    setView({ x: 0, y: 0, k: 1 });
+    setFocusIndex(0);
+  }
   const ranked = useMemo(
     () =>
       [...visible].sort((a, b) =>
@@ -566,9 +590,7 @@ export default function Home() {
       ),
     ),
   );
-  const mapOccupations = isTree
-    ? branches.flatMap((b) => b.roles)
-    : occupations;
+  const mapOccupations = isTree ? branches.flatMap((b) => b.roles) : visible;
   const strongPaths = visible.filter(
     (o) => quality.get(o.id)?.status === 'strong',
   );
@@ -591,7 +613,7 @@ export default function Home() {
     [visible, profile, effectiveProfile, planned],
   );
   const detail = selected ? byId.get(selected) : null,
-    hover = hovered ? byId.get(hovered) : null;
+    hover = hovered ? mapById.get(hovered) : null;
   const point = (o: { x: number; y: number }) => ({
     x: 100 + o.x * 1000,
     y: 80 + o.y * 620,
@@ -829,6 +851,29 @@ export default function Home() {
         </div>
         {mode === 'career' ? (
           <>
+            <div className="bubble career-focus">
+              <label htmlFor="show-all-paths">
+                <span>Show all paths</span>
+                <Switch
+                  id="show-all-paths"
+                  checked={showAllPaths}
+                  onCheckedChange={setShowAllPaths}
+                />
+              </label>
+              <p role="status" aria-live="polite">
+                {focusPaths
+                  ? `${visible.length} roles remain · ${hiddenCount} below your guardrails hidden · ${landscape.clusters.length} groups`
+                  : showAllPaths
+                    ? 'All paths are available for comparison, including weaker outcomes.'
+                    : 'Add profile details to narrow and reorganize your map.'}
+              </p>
+              {focusPaths && (
+                <p className="microcopy">
+                  Unknown fit stays visible. Skill filtering needs 4 rated
+                  skills and 20% coverage.
+                </p>
+              )}
+            </div>
             <Bubble
               step="01 · YOUR EXPERIENCE"
               title="Start with what you know."
@@ -1126,7 +1171,7 @@ export default function Home() {
             <Bubble
               step="05 · YOUR GUARDRAILS"
               title="What makes a good next move?"
-              subtitle="Set your own thresholds. Flag potential underemployment and weaker outcomes."
+              subtitle="Set the thresholds used to narrow your career map."
               open={phase === 4}
               onOpenChange={(v) => setPhase(v ? 4 : 0)}
             >
@@ -1233,7 +1278,7 @@ export default function Home() {
                 <Compass size={16} />
               </button>
             </Bubble>
-            {hasProfile && (
+            {hasDetails && (
               <div className="bubble matches-bubble">
                 <div className="section-label">
                   <Sparkles size={14} />
@@ -1535,9 +1580,11 @@ export default function Home() {
           <div className="map-caption">
             {isTree
               ? `${mapOccupations.length} example paths across ${branches.length} clusters · grouping, not a hiring forecast`
-              : basis === 'skills'
-                ? 'Grouped by skill profiles · nearby roles need similar skills'
-                : 'Grouped by activities · nearby roles share responsibilities'}
+              : focusPaths
+                ? 'Your remaining paths · activity groups resized and repacked to fit'
+                : basis === 'skills'
+                  ? 'Grouped by skill profiles · nearby roles need similar skills'
+                  : 'Grouped by activities · nearby roles share responsibilities'}
             {aiOverlay && (
               <button
                 onClick={() => {
@@ -1616,18 +1663,15 @@ export default function Home() {
             <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
               <g className="connections" aria-hidden="true">
                 {!isTree &&
-                  occupations.flatMap((o) =>
+                  visible.flatMap((o) =>
                     o.neighbors
                       .slice(0, 2)
                       .filter(
                         ([id, sim]) =>
-                          id > o.id &&
-                          sim > 0.13 &&
-                          visibleIds.has(id) &&
-                          visibleIds.has(o.id),
+                          id > o.id && sim > 0.13 && mapById.has(id),
                       )
                       .map(([id]) => {
-                        const target = byId.get(id)!;
+                        const target = mapById.get(id)!;
                         const a = point(o),
                           b = point(target);
                         return (
@@ -1648,14 +1692,13 @@ export default function Home() {
                   )}
               </g>
               {!isTree &&
-                activeClusters.map((c) => {
+                landscape.clusters.map((c) => {
                   const p = point(c);
                   return (
                     <g
                       key={c.id}
                       className="cluster-label"
-                      transform={`translate(${p.x},${p.y - 35})`}
-                      opacity={cluster === null || cluster === c.id ? 1 : 0.12}
+                      style={{ transform: `translate(${p.x}px,${p.y - 35}px)` }}
                       aria-hidden="true"
                     >
                       <text
@@ -1759,8 +1802,9 @@ export default function Home() {
                 </g>
               )}
               {mapOccupations.map((o, i) => {
-                const p = isTree ? treePositions.get(o.id)! : point(o),
-                  score = scores.get(o.id)?.score ?? 0;
+                const position = isTree ? treePositions.get(o.id)! : point(o);
+                const p = { x: 0, y: 0 };
+                const score = scores.get(o.id)?.score ?? 0;
                 const missingSkills =
                   basis === 'skills' && o.imputedMeasurements === 70;
                 const bright =
@@ -1773,11 +1817,11 @@ export default function Home() {
                     : color === 'quality'
                       ? QUALITY[quality.get(o.id)!.status].color
                       : COLORS[o.cluster];
-                const opacity = !visibleIds.has(o.id)
-                  ? 0.065
-                  : bright
-                    ? 0.16 + 0.84 * (score / 100) ** 3
-                    : 0.8;
+                const opacity = bright
+                  ? scores.get(o.id)?.score == null
+                    ? 0.5
+                    : 0.3 + 0.7 * (score / 100) ** 3
+                  : 0.8;
                 return (
                   <g
                     key={o.id}
@@ -1820,7 +1864,9 @@ export default function Home() {
                         )?.focus();
                       }
                     }}
-                    style={{ opacity: !visibleIds.has(o.id) ? 0.065 : 1 }}
+                    style={{
+                      transform: `translate(${position.x}px,${position.y}px)`,
+                    }}
                   >
                     <title>
                       {o.title}
@@ -1910,14 +1956,27 @@ export default function Home() {
         )}
         {!visible.length && data && (
           <div className="map-empty">
-            No matching occupations
+            {focusPaths
+              ? 'No roles meet your current guardrails and filters.'
+              : 'No matching occupations'}
+            {focusPaths && (
+              <button
+                onClick={() => {
+                  setCollapsed(false);
+                  setPhase(4);
+                }}
+              >
+                Adjust guardrails
+              </button>
+            )}
             <button
               onClick={() => {
                 reset();
                 setZone(0);
+                if (focusPaths) setShowAllPaths(true);
               }}
             >
-              Clear filters
+              {focusPaths ? 'Show all paths' : 'Clear filters'}
             </button>
           </div>
         )}
@@ -2056,12 +2115,14 @@ export default function Home() {
       </div>
       <div className="map-legend">
         {color === 'quality' || isTree ? (
-          Object.entries(QUALITY).map(([key, q]) => (
-            <span className="quality-legend-item" key={key}>
-              <i style={{ background: q.color }} />
-              {q.label}
-            </span>
-          ))
+          Object.entries(QUALITY)
+            .filter(([key]) => !focusPaths || key !== 'below')
+            .map(([key, q]) => (
+              <span className="quality-legend-item" key={key}>
+                <i style={{ background: q.color }} />
+                {q.label}
+              </span>
+            ))
         ) : color === 'pay' ? (
           <>
             <span>Lower pay</span>
@@ -2073,7 +2134,9 @@ export default function Home() {
         ) : mode === 'career' && hasProfile ? (
           <>
             <span className="legend-ring" />
-            Unknown or lower alignment
+            {focusPaths
+              ? 'Uncertain or near your minimum'
+              : 'Unknown or lower alignment'}
             <span className="legend-glow" />
             Higher alignment
           </>
@@ -2804,6 +2867,13 @@ export default function Home() {
             Role-based suggestions are starting estimates for you to review.
             Education, licensing, and experience need independent checking.
           </p>
+          <p>
+            The focused map resizes and packs surviving activity groups, then
+            spreads their remaining roles to use the available space. Group
+            membership and source similarity scores stay unchanged; these
+            compacted distances are for readability. Explore the database keeps
+            the original layouts and does not apply your career guardrails.
+          </p>
           <h3>What makes a strong path?</h3>
           <p>
             A role must meet every selected threshold: skill alignment, annual
@@ -2814,12 +2884,14 @@ export default function Home() {
             credential requirements.
           </p>
           <p>
-            Known threshold failures appear in pink. Missing evidence appears in
-            gray. Amber means alignment or growth is close to your minimum.
-            Green means the available evidence meets your guardrails. At least
-            four rated skills covering 20% of occupational skill importance are
-            needed; this prototype threshold is a heuristic, not a validated
-            prediction.
+            Once you add profile details or change a guardrail, career
+            navigation hides known threshold failures and removes empty groups
+            from both the map and tree. Show all paths restores them for
+            comparison in pink. Missing evidence stays visible in gray. Amber
+            means alignment or growth is close to your minimum. Green means the
+            available evidence meets your guardrails. At least four rated skills
+            covering 20% of occupational skill importance are needed; this
+            prototype threshold is a heuristic, not a validated prediction.
           </p>
           <p>
             Market demand uses the BLS projection period displayed for each

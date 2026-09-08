@@ -14,6 +14,7 @@ import {
   aiLabel,
   compileSkills,
   occupationLayout,
+  careerLandscape,
 } from '../lib/career.ts';
 const d = JSON.parse(
   readFileSync(new URL('../public/onet.json', import.meta.url)),
@@ -144,6 +145,127 @@ assert.equal(alignment(dev, full).coverage, 100);
 const base = { ...DEFAULT_CRITERIA, education: 5 };
 assert.equal(pathQuality(dev, full, base, 2).status, 'strong');
 assert.equal(pathQuality(dev, {}, base, 2).status, 'unknown');
+
+// One source of survivors drives map nodes, links, group labels, and tree candidates.
+const qualities = (profile, criteria = base, percentile = 2) =>
+  new Map(
+    d.occupations.map((o) => [
+      o.id,
+      pathQuality(o, profile, criteria, percentile),
+    ]),
+  );
+const sourceCoordinates = d.occupations.map(({ id, x, y }) => [id, x, y]);
+const outcome = qualities(full);
+const before = performance.now();
+const focused = careerLandscape(d.occupations, d.clusters, outcome, true);
+console.log(
+  `Compacted ${focused.occupations.length} career roles in ${(performance.now() - before).toFixed(0)}ms`,
+);
+const survivors = new Set(focused.occupations.map((o) => o.id));
+assert(survivors.has(dev.id) && !survivors.has(clerk.id));
+assert.equal(
+  focused.occupations.length,
+  d.occupations.filter((o) => outcome.get(o.id).status !== 'below').length,
+);
+assert(focused.occupations.every((o) => outcome.get(o.id).status !== 'below'));
+assert(
+  focused.occupations.some(
+    (o) => o.x !== d.occupations.find((v) => v.id === o.id).x,
+  ),
+);
+assert.deepEqual(
+  focused,
+  careerLandscape(d.occupations, d.clusters, outcome, true),
+);
+for (const c of focused.clusters) {
+  assert(c.count > 0);
+  assert.equal(
+    c.count,
+    focused.occupations.filter((o) => o.cluster === c.id).length,
+  );
+}
+for (const o of focused.occupations) {
+  const source = d.occupations.find((v) => v.id === o.id);
+  assert(Number.isFinite(o.x) && o.x >= 0 && o.x <= 1);
+  assert(Number.isFinite(o.y) && o.y >= 0 && o.y <= 1);
+  assert.equal(o.cluster, source.cluster);
+  assert.equal(o.neighbors, source.neighbors);
+  assert.equal(o.wage, source.wage);
+  assert.equal(o.ai, source.ai);
+}
+const restored = careerLandscape(d.occupations, d.clusters, outcome, false);
+assert.equal(restored.occupations, d.occupations);
+assert.equal(restored.clusters.length, 12);
+assert.deepEqual(
+  sourceCoordinates,
+  d.occupations.map(({ id, x, y }) => [id, x, y]),
+);
+const one = careerLandscape([dev, clerk], d.clusters, outcome, true);
+assert.equal(one.occupations.length, 1);
+assert.equal(one.clusters.length, 1);
+assert.equal(one.occupations[0].x, 0.5);
+assert.equal(one.occupations[0].y, 0.5);
+const permissive = {
+  education: 0,
+  payFloor: 0,
+  minFit: 80,
+  minGrowth: -100,
+  minOpenings: 0,
+};
+assert.equal(
+  careerLandscape(
+    d.occupations,
+    d.clusters,
+    qualities({ 0: 0 }, permissive),
+    true,
+  ).occupations.length,
+  923,
+);
+assert.equal(
+  careerLandscape(
+    d.occupations,
+    d.clusters,
+    qualities({}),
+    true,
+  ).occupations.some((o) => o.id === dev.id),
+  true,
+);
+assert.deepEqual(careerLandscape([], d.clusters, outcome, true), {
+  occupations: [],
+  clusters: [],
+});
+const low = Object.fromEntries(d.skills.map((_, i) => [i, 0]));
+assert.equal(
+  careerLandscape([dev], d.clusters, qualities(low, permissive), true)
+    .occupations.length,
+  0,
+);
+assert.equal(
+  careerLandscape([dev], d.clusters, qualities(full, permissive), true)
+    .occupations.length,
+  1,
+);
+const highTarget = { ...base, payFloor: 150000 };
+assert.equal(
+  careerLandscape([dev], d.clusters, qualities(full, highTarget, 2), true)
+    .occupations.length,
+  0,
+);
+assert.equal(
+  careerLandscape([dev], d.clusters, qualities(full, highTarget, 4), true)
+    .occupations.length,
+  1,
+);
+assert.equal(
+  careerLandscape(
+    [{ ...dev, wage: undefined, trend: undefined }],
+    d.clusters,
+    new Map([[dev.id, { status: 'unknown' }]]),
+    true,
+  ).occupations.length,
+  1,
+);
+
 assert.equal(
   pathQuality(dev, full, { ...base, payFloor: 150000 }, 2).status,
   'below',

@@ -403,6 +403,105 @@ export const QUALITY = {
   unknown: { label: 'Needs more evidence', color: '#8e92aa', order: 1 },
   below: { label: 'Below your thresholds', color: '#e18f9f', order: 0 },
 };
+
+export function careerLandscape(
+  occupations: Occupation[],
+  clusters: Cluster[],
+  quality: Map<string, { status: keyof typeof QUALITY }>,
+  focus: boolean,
+) {
+  const remaining = focus
+    ? occupations.filter((o) => quality.get(o.id)?.status !== 'below')
+    : occupations;
+  const groups = clusters.flatMap((cluster) => {
+    const members = remaining.filter((o) => o.cluster === cluster.id);
+    return members.length
+      ? [{ ...cluster, count: members.length, members }]
+      : [];
+  });
+  if (!focus || !remaining.length)
+    return { occupations: remaining, clusters: groups };
+
+  // ponytail: deterministic circle packing preserves group membership, not UMAP distances.
+  // Pairwise relaxation is bounded for this 923-role dataset; use a spatial index if it grows.
+  const bubbles = groups.map((group) => ({
+    ...group,
+    x: (group.x - 0.5) * 700,
+    y: (group.y - 0.5) * 434,
+    radius: 14 + 10 * Math.sqrt(group.count),
+  }));
+  const separate = (
+    points: { x: number; y: number; radius: number }[],
+    gap: number,
+  ) => {
+    for (let i = 0; i < points.length; i++) {
+      for (let j = i + 1; j < points.length; j++) {
+        const a = points[i],
+          b = points[j];
+        const dx = b.x - a.x,
+          dy = b.y - a.y;
+        const distance = Math.hypot(dx, dy);
+        const overlap = a.radius + b.radius + gap - distance;
+        if (overlap <= 0) continue;
+        const angle = ((i * 137.5 + j) * Math.PI) / 180;
+        const ux = distance ? dx / distance : Math.cos(angle);
+        const uy = distance ? dy / distance : Math.sin(angle);
+        a.x -= (ux * overlap) / 2;
+        a.y -= (uy * overlap) / 2;
+        b.x += (ux * overlap) / 2;
+        b.y += (uy * overlap) / 2;
+      }
+    }
+  };
+  for (let step = 0; step < 80; step++) {
+    bubbles.forEach((b) => {
+      b.x *= 0.985;
+      b.y *= 0.985;
+    });
+    separate(bubbles, 22);
+  }
+  const positions = new Map<string, { x: number; y: number }>();
+  for (const b of bubbles) {
+    const cx = b.members.reduce((s, o) => s + o.x, 0) / b.count;
+    const cy = b.members.reduce((s, o) => s + o.y, 0) / b.count;
+    const spread = Math.max(
+      1,
+      ...b.members.map((o) => Math.hypot((o.x - cx) * 1000, (o.y - cy) * 620)),
+    );
+    const points = b.members.map((o) => ({
+      id: o.id,
+      x: (((o.x - cx) * 1000) / spread) * (b.radius - 14),
+      y: (((o.y - cy) * 620) / spread) * (b.radius - 14),
+      radius: 7,
+    }));
+    for (let step = 0; step < 40; step++) {
+      separate(points, 1);
+      for (const p of points) {
+        const scale = Math.min(1, (b.radius - 7) / (Math.hypot(p.x, p.y) || 1));
+        p.x *= scale;
+        p.y *= scale;
+      }
+    }
+    points.forEach((p) => positions.set(p.id, { x: b.x + p.x, y: b.y + p.y }));
+  }
+  const left = Math.min(...bubbles.map((b) => b.x - b.radius));
+  const right = Math.max(...bubbles.map((b) => b.x + b.radius));
+  const top = Math.min(...bubbles.map((b) => b.y - b.radius));
+  const bottom = Math.max(...bubbles.map((b) => b.y + b.radius));
+  const scale = Math.min(960 / (right - left), 580 / (bottom - top), 1.8);
+  const project = (p: { x: number; y: number }) => ({
+    x: 0.5 + ((p.x - (left + right) / 2) * scale) / 1000,
+    y: 0.5 + ((p.y - (top + bottom) / 2) * scale) / 620,
+  });
+  return {
+    occupations: remaining.map((o) => ({
+      ...o,
+      ...project(positions.get(o.id)!),
+    })),
+    clusters: bubbles.map((b) => ({ ...b, ...project(b) })),
+  };
+}
+
 export function pathQuality(
   o: Occupation,
   profile: Profile,

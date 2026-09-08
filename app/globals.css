@@ -469,7 +469,7 @@ footer > span {
     scroll-behavior: auto !important;
   }
 }
-/* Floating controls sit above the map; the map keeps its position through profile changes. */
+/* Floating controls sit above the map. */
 .data-badge {
   background: none;
   border: 0;
@@ -811,7 +811,9 @@ footer > span {
 }
 .occupation-node {
   cursor: pointer;
-  transition: opacity 0.6s;
+  transition:
+    opacity 0.6s,
+    transform 0.65s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .occupation-node .node-core {
   transition:
@@ -835,7 +837,9 @@ footer > span {
 }
 .cluster-label {
   pointer-events: none;
-  transition: opacity 0.35s;
+  transition:
+    opacity 0.35s,
+    transform 0.65s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .map-controls {
   bottom: 255px;
@@ -2462,4 +2466,18 @@ footer .mobile-info {
   line-height: 1.65;
   color: #ad9bbc;
   margin: 15px 0 0;
+}
+
+.career-focus label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+.career-focus > p {
+  margin-top: 10px;
+  color: #b8b1c7;
+  font-size: 13px;
+  line-height: 1.5;
 }
