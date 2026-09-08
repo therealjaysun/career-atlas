@@ -89,6 +89,7 @@ import {
   titleScore,
   backgroundOverlap,
   EDUCATION,
+  ENTRY_PATHS,
   EMPTY_BACKGROUND,
   AI_SOURCES,
   aiValue,
@@ -1141,31 +1142,35 @@ export default function Home() {
                   </button>
                 </div>
               )}
-              <div className="field-label">Preparation you’re open to</div>
+              <div className="field-label">
+                Education & training you’re open to
+              </div>
               <Select
                 value={String(zone)}
                 onValueChange={(v) => setZone(Number(v))}
               >
                 <SelectTrigger
-                  className="full-select"
-                  aria-label="Maximum preparation level"
+                  className="full-select entry-select"
+                  aria-label="Education and training you’re open to"
                 >
                   <SelectValue>
-                    {zone ? `Up to Job Zone ${zone}` : 'All preparation levels'}
+                    {ENTRY_PATHS[zone]?.label ?? 'Any education or training'}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">All preparation levels</SelectItem>
-                  {[1, 2, 3, 4, 5].map((z) => (
-                    <SelectItem value={String(z)} key={z}>
-                      Up to Job Zone {z}
+                  <SelectItem value="0">Any education or training</SelectItem>
+                  {Object.entries(ENTRY_PATHS).map(([value, entry]) => (
+                    <SelectItem value={value} key={value}>
+                      <span className="whitespace-normal">{entry.label}</span>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <p className="microcopy">
-                Job Zones describe typical education, experience, and
-                training—not eligibility.
+                {ENTRY_PATHS[zone]?.description ??
+                  'Choose the most education and training you’re open to, including what you already have.'}{' '}
+                Includes roles needing less. Actual requirements vary by
+                employer.
               </p>
             </Bubble>
             <Bubble
@@ -2401,11 +2406,20 @@ export default function Home() {
                 <div className="detail-meta">
                   <span>{detail.id}</span>
                   <span>
-                    {detail.zone
-                      ? `Job Zone ${detail.zone} / 5`
-                      : 'Preparation not reported'}
+                    {ENTRY_PATHS[detail.zone ?? 0]?.label ??
+                      'Education & training not reported'}
                   </span>
                 </div>
+              </div>
+              <div className="detail-section">
+                <div className="section-label">
+                  Typical education & training
+                </div>
+                <p className="microcopy">
+                  {ENTRY_PATHS[detail.zone ?? 0]?.description ??
+                    'Typical education, experience, and training have not been reported for this role.'}{' '}
+                  Check individual job listings for exact requirements.
+                </p>
               </div>
               <div className="detail-section ai-detail">
                 <div className="section-label">
@@ -2565,15 +2579,14 @@ export default function Home() {
                   ))}
                   {quality.get(detail.id)!.status === 'strong' && (
                     <li>
-                      Meets your current skill, pay, preparation, growth, and
+                      Meets your current skill, pay, education, growth, and
                       openings thresholds.
                     </li>
                   )}
                 </ul>
                 <p className="microcopy">
-                  Relative to your preferences, not a judgment about the
-                  occupation. Preparation is an approximate underemployment
-                  flag.
+                  Based on your preferences. The education comparison is a rough
+                  sign that a role could underuse your qualifications.
                 </p>
               </div>
               <div className="detail-section">
@@ -2878,11 +2891,21 @@ export default function Home() {
           <p>
             A role must meet every selected threshold: skill alignment, annual
             pay at the chosen percentile, projected growth, and annual openings.
-            A role is flagged for potential underemployment when its Job Zone is
-            at least two below your preparation proxy (bachelor’s: 4; graduate
-            degree: 5). This does not measure the value of a job or establish
-            credential requirements.
+            For someone with a bachelor’s degree, roles typically entered with
+            high school and job training are flagged as potentially underusing
+            their education. For someone with a graduate or professional degree,
+            that also includes roles usually entered through trade training or
+            an associate degree. These broad categories are a rough guide;
+            individual employers set their own requirements.
           </p>
+          <a
+            href="https://www.onetonline.org/help/online/zones"
+            target="_blank"
+            rel="noreferrer"
+          >
+            How O*NET defines education and training categories
+            <ExternalLink size={13} />
+          </a>
           <p>
             Once you add profile details or change a guardrail, career
             navigation hides known threshold failures and removes empty groups
@@ -2983,8 +3006,8 @@ export default function Home() {
             subsequence, transposition, and trigram similarity, with exact
             task-text fallback. It never fuzzy-matches research data to
             occupations. Education distinguishes master’s, doctorate, and
-            professional degrees, sharing a graduate preparation proxy for the
-            underemployment flag.
+            professional degrees. These advanced degrees use the same broad
+            education comparison when flagging potential underemployment.
           </p>
           <p>
             Major, hobbies, talents, athletic experience, and training

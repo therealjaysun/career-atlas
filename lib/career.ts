@@ -161,6 +161,31 @@ export const EDUCATION = [
   'Doctorate / PhD',
   'Professional degree',
 ];
+export const ENTRY_PATHS: Record<
+  number,
+  { label: string; description: string }
+> = {
+  2: {
+    label: 'High school & job training',
+    description:
+      'Often high school or a GED, with little to some previous experience. Training on the job can take a few days to a year.',
+  },
+  3: {
+    label: 'Trade school or associate degree',
+    description:
+      'Often vocational training, an apprenticeship, an associate degree, or related work experience.',
+  },
+  4: {
+    label: 'Usually a bachelor’s degree',
+    description:
+      'Most roles involve a four-year degree and substantial related experience or training. Some follow other routes.',
+  },
+  5: {
+    label: 'Usually a graduate degree',
+    description:
+      'Most roles involve a master’s, doctorate, or professional degree, plus extensive experience or specialized training.',
+  },
+};
 export type Background = {
   source: string;
   major: string;
@@ -545,10 +570,11 @@ export function pathQuality(
   if (criteria.education === 0)
     unknown.push('Add education to assess potential underemployment');
   if (criteria.education >= 4) {
-    if (o.zone === null) unknown.push('Preparation level not reported');
+    if (o.zone === null)
+      unknown.push('Typical education and training not reported');
     else if (o.zone <= Math.min(criteria.education, 5) - 2)
       reasons.push(
-        'Potential underemployment: typical preparation is well below your education',
+        'Potential underemployment: this role typically calls for much less education or training than you have',
       );
   }
   for (const [id, value] of Object.entries(abilities)) {

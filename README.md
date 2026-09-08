@@ -47,6 +47,8 @@ Wages: BLS OEWS May 2025, retrieved via each occupation's official O*NET OnLine 
 
 Market demand: BLS national employment projections as published on each O*NET OnLine trend page. All 923 roles currently show 2024–2034 projections. Openings include growth and replacement, not just net new jobs. Broader outlook groups are identified. This is a market opportunity proxy, not a personal hiring probability.
 
+The interface translates O*NET’s four preparation categories into familiar education and training descriptions, with the same labels in the filter and occupation details. Choices cover high school and job training, trade school or an associate degree, typically a bachelor’s degree, and typically a graduate degree. The filter includes roles at or below the selected category; “Any education or training” includes all. Descriptions preserve the distinction between typical education, experience, and actual employer requirements. Source: [O*NET category definitions](https://www.onetonline.org/help/online/zones). The dataset uses codes 2–5; the obsolete empty code-1 option is omitted.
+
 ## Outcome rules
 
 Skill alignment is importance-weighted coverage of required levels, over rated skills only; unknown skills do not become zero. Coverage is the share of total skill importance that has been rated. At least 4 rated dimensions and 20% coverage are needed before returning a strong outcome; these are explicit prototype heuristics.

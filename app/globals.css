@@ -2481,3 +2481,16 @@ footer .mobile-info {
   font-size: 13px;
   line-height: 1.5;
 }
+
+.full-select.entry-select {
+  height: auto !important;
+  min-height: 39px;
+  white-space: normal;
+}
+.entry-select [data-slot='select-value'] {
+  -webkit-line-clamp: unset;
+  white-space: normal;
+}
+.detail-meta {
+  flex-wrap: wrap;
+}
