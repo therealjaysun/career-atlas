@@ -276,7 +276,83 @@ export const EMPTY_BACKGROUND: Background = {
   athletics: '',
   physical: '',
 };
-export type SearchItem = { id: string; name: string; aliases?: string[] };
+export type SearchItem = {
+  id: string;
+  name: string;
+  aliases?: string[];
+  custom?: boolean;
+};
+export const PREFILL_FIELDS = ['source', 'hobbies', 'training'] as const;
+export type PrefillField = (typeof PREFILL_FIELDS)[number];
+export type Prefills = Record<
+  PrefillField,
+  {
+    label: string;
+    snapshot: string;
+    url: string;
+    items: SearchItem[];
+  }
+>;
+export function validPrefills(value: unknown): value is Prefills {
+  if (!value || typeof value !== 'object') return false;
+  return PREFILL_FIELDS.every((key) => {
+    const source = (value as Prefills)[key];
+    return (
+      source &&
+      typeof source.label === 'string' &&
+      typeof source.snapshot === 'string' &&
+      typeof source.url === 'string' &&
+      source.url.startsWith('https://') &&
+      Array.isArray(source.items) &&
+      source.items.every(
+        (item) =>
+          item &&
+          typeof item.id === 'string' &&
+          item.id.length > 0 &&
+          typeof item.name === 'string' &&
+          item.name.trim().length > 0 &&
+          item.name.length <= 500 &&
+          (item.aliases === undefined ||
+            (Array.isArray(item.aliases) &&
+              item.aliases.every((a) => typeof a === 'string'))),
+      ) &&
+      new Set(source.items.map((item) => item.id)).size === source.items.length
+    );
+  });
+}
+
+export function pickerSuggestions(
+  items: SearchItem[],
+  query: string,
+  selected: SearchItem[] = [],
+  allowCustom = false,
+) {
+  const ids = new Set(items.map((item) => item.id));
+  const all = [...items, ...selected.filter((item) => !ids.has(item.id))];
+  const q = normalize(query);
+  const direct = q
+    ? all.filter((item) =>
+        [item.name, ...(item.aliases ?? [])].some((name) =>
+          normalize(name).includes(q),
+        ),
+      )
+    : all;
+  const found = (direct.length ? direct : all)
+    .map((item) => ({ item, score: titleScore(item, query) }))
+    .filter((entry) => entry.score >= 0.025)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 50)
+    .map((entry) => entry.item);
+  const custom = query.trim();
+  const fold = (text: string) => text.trim().normalize('NFKC').toLowerCase();
+  if (
+    allowCustom &&
+    custom &&
+    !all.some((item) => fold(item.name) === fold(custom))
+  )
+    found.push({ id: `custom:${fold(custom)}`, name: custom, custom: true });
+  return found;
+}
 const normalize = (s: string) =>
   s
     .normalize('NFKD')
@@ -292,6 +368,7 @@ export function titleScore(item: SearchItem, query: string) {
   let best = 0;
   for (const name of [item.name, ...(item.aliases ?? [])]) {
     const n = normalize(name);
+    if (n === q) return 1;
     let score = defaultFilter(n, q);
     // A short trigram fallback also catches substitutions that subsequence search misses.
     if (!score && q.length >= 5) {
@@ -307,9 +384,10 @@ export function titleScore(item: SearchItem, query: string) {
     }
     best = Math.max(
       best,
-      score > 0 ? Math.min(1, score * (name === item.name ? 1.05 : 0.95)) : 0,
+      score > 0
+        ? Math.min(0.99, score * (name === item.name ? 1.05 : 0.95))
+        : 0,
     );
-    if (best === 1) break;
   }
   return best;
 }

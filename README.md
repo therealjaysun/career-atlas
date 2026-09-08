@@ -67,6 +67,18 @@ The same surviving role set drives points, connection endpoints, group labels/co
 
 One optional WebMCP tool (`explore_occupation`) is registered only in supporting browsers. No supported WebMCP validation context was available during this build, so its runtime contract is unverified. Browser UI testing was not performed; the provided Sites workflow reserves it for an explicit request.
 
+## Background dropdown sources
+
+Schools, hobbies, and certifications use the same accessible multi-select combobox as previous jobs. Users can search titles and acronyms, choose several suggestions, remove individual chips, or choose **Add “…”** for a custom entry. A missing catalog does not block custom entries. Confirmed selections remain local to the current tab. Names are stored with newline separators so commas in school or issuer names are preserved. Selections provide context/interest keywords only; they do not grant skills or verify a credential.
+
+`public/background-options.json` contains:
+
+- 6,064 distinct school/campus labels from [NCES IPEDS HD2024](https://nces.ed.gov/ipeds/datacenter/data/HD2024.zip), covering U.S. colleges and training providers, with city/state and institutional aliases. The 2025 download was unavailable when checked; the interface explicitly labels this as 2024. Other schools/providers remain supported through custom entry.
+- 6,319 distinct certification/issuer labels from [CareerOneStop’s July 2026 certification download](https://www.careeronestop.org/Developers/Data/certifications.aspx). Deleted/suppressed certifications and issuers are excluded. Certification and organization acronyms support search. The dropdown is not proof that a certification is current, held, or valid for a particular role.
+- 216 names from [Wikidata’s hobby list](https://www.wikidata.org/wiki/Wikidata:List_of_activities_done_as_hobby), retrieved September 8, 2026. This is a community list with broad and niche activities, not an exhaustive hobby taxonomy. Structured Wikidata facts are CC0; attribution and a link are retained.
+
+Run `python3 scripts/prepare_prefills.py /tmp/onet-prefill` to reproduce from cached snapshots or fetch missing public source files. The certification SQL export is parsed as text, never executed. The generated file includes source URLs and SHA-256 hashes. To refresh intentionally, replace the specific cached input, check its snapshot date and coverage, and rerun. A date assertion prevents silently labeling a newer certification download as July 2026. Source names, dates, scope, and counts are shown below the fields and in Data & methodology.
+
 ## Broader profiles and fuzzy search
 
 Previous jobs support multiple title selections. The **My skills** window compiles every reported positive skill level from those jobs alongside the user's own additions. Each skill appears once, showing all contributing jobs; its suggested level is the highest reported level, never a sum. Suggestions stay outside career scoring until checked, rated, or explicitly accepted together. Existing ratings, including zero, always win and remain when a job is removed. Unrated suggestions from removed jobs disappear when no remaining job supplies them.

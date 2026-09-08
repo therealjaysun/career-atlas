@@ -58,6 +58,7 @@ import {
   ComboboxChips,
   ComboboxChip,
   ComboboxChipsInput,
+  ComboboxTrigger,
   ComboboxValue,
   useComboboxAnchor,
 } from '@/components/ui/combobox';
@@ -96,6 +97,10 @@ import {
   aiValue,
   aiLabel,
   type SearchItem,
+  pickerSuggestions,
+  PREFILL_FIELDS,
+  validPrefills,
+  type Prefills,
   type Background,
   type AIMetric,
   money,
@@ -251,13 +256,7 @@ function Picker({
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
   const filtered = useMemo(
-    () =>
-      items
-        .map((item) => ({ item, score: titleScore(item, deferredSearch) }))
-        .filter((x) => x.score >= 0.025)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 50)
-        .map((x) => x.item),
+    () => pickerSuggestions(items, deferredSearch),
     [items, deferredSearch],
   );
   return (
@@ -289,39 +288,44 @@ function Picker({
     </Combobox>
   );
 }
-function JobPicker({
+function MultiPicker({
   items,
   values,
   onChange,
+  label,
+  placeholder,
+  id,
+  allowCustom = false,
 }: {
   items: SearchItem[];
-  values: string[];
-  onChange: (ids: string[]) => void;
+  values: SearchItem[];
+  onChange: (items: SearchItem[]) => void;
+  label: string;
+  placeholder: string;
+  id?: string;
+  allowCustom?: boolean;
 }) {
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
   const anchor = useComboboxAnchor();
   const filtered = useMemo(
-    () =>
-      items
-        .map((item) => ({ item, score: titleScore(item, deferredSearch) }))
-        .filter((x) => x.score >= 0.025)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 50)
-        .map((x) => x.item),
-    [items, deferredSearch],
+    () => pickerSuggestions(items, deferredSearch, values, allowCustom),
+    [items, deferredSearch, values, allowCustom],
   );
   return (
     <Combobox
       multiple
-      items={items}
+      items={filtered}
       filteredItems={filtered}
-      value={values
-        .map((id) => items.find((item) => item.id === id))
-        .filter((item): item is SearchItem => !!item)}
-      onValueChange={(items) =>
-        onChange([...new Set(items.map((item) => item.id))])
-      }
+      value={values}
+      inputValue={search}
+      autoHighlight={!!search}
+      onValueChange={(selected) => {
+        onChange([
+          ...new Map(selected.map((item) => [item.id, item])).values(),
+        ]);
+        setSearch('');
+      }}
       onInputValueChange={setSearch}
       itemToStringLabel={(item) => item.name}
       isItemEqualToValue={(a, b) => a.id === b.id}
@@ -336,17 +340,41 @@ function JobPicker({
             ))
           }
         </ComboboxValue>
-        <ComboboxChipsInput
-          aria-label="Add previous jobs"
-          placeholder="Search and add another job…"
-        />
+        <div className="multi-picker-entry">
+          <ComboboxChipsInput
+            id={id}
+            aria-label={label}
+            placeholder={placeholder}
+            maxLength={allowCustom ? 500 : 160}
+          />
+          <ComboboxTrigger
+            className="icon-button"
+            aria-label={`Show suggestions for ${label.toLowerCase()}`}
+          />
+        </div>
       </ComboboxChips>
       <ComboboxContent anchor={anchor} className="picker-popup">
-        <ComboboxEmpty>No close titles found.</ComboboxEmpty>
+        <ComboboxEmpty>
+          {allowCustom
+            ? 'Type to search or add your own entry.'
+            : 'No close titles found.'}
+        </ComboboxEmpty>
         <ComboboxList>
           {(item: SearchItem) => (
-            <ComboboxItem key={item.id} value={item}>
-              {item.name}
+            <ComboboxItem
+              key={item.id}
+              value={item}
+              disabled={item.custom && search !== deferredSearch}
+            >
+              {item.custom &&
+              !values.some((selected) => selected.id === item.id) ? (
+                <>
+                  <Plus size={14} />
+                  {`Add “${item.name}”`}
+                </>
+              ) : (
+                item.name
+              )}
             </ComboboxItem>
           )}
         </ComboboxList>
@@ -357,6 +385,8 @@ function JobPicker({
 export default function Home() {
   const [data, setData] = useState<Dataset | null>(null),
     [error, setError] = useState('');
+  const [prefills, setPrefills] = useState<Prefills | null>(null);
+  const [prefillError, setPrefillError] = useState(false);
   const [mode, setMode] = useState('career'),
     [collapsed, setCollapsed] = useState(false),
     [phase, setPhase] = useState(1);
@@ -415,6 +445,22 @@ export default function Home() {
         if (e.name !== 'AbortError') setError(e.message);
       });
     return () => c.abort();
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/background-options.json', { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw Error('Suggestions unavailable');
+        return response.json();
+      })
+      .then((value: unknown) => {
+        if (!validPrefills(value)) throw Error('Invalid suggestions');
+        setPrefills(value);
+      })
+      .catch((error) => {
+        if (error.name !== 'AbortError') setPrefillError(true);
+      });
+    return () => controller.abort();
   }, []);
   const occupations = useMemo(
     () => occupationLayout(data, basis),
@@ -887,7 +933,16 @@ export default function Home() {
               open={phase === 1}
               onOpenChange={(v) => setPhase(v ? 1 : 0)}
             >
-              <JobPicker items={roleItems} values={roles} onChange={setRoles} />
+              <MultiPicker
+                items={roleItems}
+                values={roles.flatMap((id) => {
+                  const o = byId.get(id);
+                  return o ? [{ id, name: o.title }] : [];
+                })}
+                onChange={(items) => setRoles(items.map((item) => item.id))}
+                label="Add previous jobs"
+                placeholder="Search and add another job…"
+              />
               <p className="microcopy">
                 {roles.length} previous {roles.length === 1 ? 'job' : 'jobs'} ·{' '}
                 {compiled.filter((s) => s.sources.length).length} distinct
@@ -950,30 +1005,91 @@ export default function Home() {
                   ))}
                 </SelectContent>
               </Select>
-              {BACKGROUND_FIELDS.map((field) => (
-                <div key={field.key}>
-                  <label
-                    className="field-label"
-                    htmlFor={`background-${field.key}`}
-                  >
-                    {field.label}
-                  </label>
-                  <div className="input-shell">
-                    <input
-                      id={`background-${field.key}`}
-                      value={background[field.key]}
-                      maxLength={500}
-                      placeholder={field.placeholder}
-                      onChange={(e) =>
-                        setBackground((b) => ({
-                          ...b,
-                          [field.key]: e.target.value,
-                        }))
-                      }
-                    />
+              {BACKGROUND_FIELDS.map((field) => {
+                const key = PREFILL_FIELDS.find((key) => key === field.key);
+                const source = key && prefills?.[key];
+                return (
+                  <div key={field.key}>
+                    <label
+                      className="field-label"
+                      htmlFor={`background-${field.key}`}
+                    >
+                      {field.label}
+                    </label>
+                    {key ? (
+                      <>
+                        <MultiPicker
+                          id={`background-${field.key}`}
+                          items={source?.items ?? []}
+                          values={background[field.key]
+                            .split('\n')
+                            .filter(Boolean)
+                            .map(
+                              (name) =>
+                                source?.items.find(
+                                  (item) => item.name === name,
+                                ) ?? {
+                                  id: `custom:${name.normalize('NFKC').toLowerCase()}`,
+                                  name,
+                                  custom: true,
+                                },
+                            )}
+                          onChange={(items) =>
+                            setBackground((b) => ({
+                              ...b,
+                              [field.key]: items
+                                .map((item) => item.name)
+                                .join('\n'),
+                            }))
+                          }
+                          label={field.label}
+                          placeholder="Search suggestions or add your own…"
+                          allowCustom
+                        />
+                        <p className="microcopy">
+                          {source ? (
+                            <>
+                              {source.items.length.toLocaleString()} suggestions
+                              ·{' '}
+                              <a
+                                href={source.url}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {source.label}
+                              </a>
+                              <br />
+                              {source.snapshot}
+                            </>
+                          ) : prefillError ? (
+                            'Suggestions could not load. You can still add your own.'
+                          ) : (
+                            'Loading suggestions… You can still add your own.'
+                          )}
+                          <br />
+                          Choose multiple entries, or type and select “Add” to
+                          save your own.
+                        </p>
+                      </>
+                    ) : (
+                      <div className="input-shell">
+                        <input
+                          id={`background-${field.key}`}
+                          value={background[field.key]}
+                          maxLength={500}
+                          placeholder={field.placeholder}
+                          onChange={(e) =>
+                            setBackground((b) => ({
+                              ...b,
+                              [field.key]: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
               <p className="microcopy">
                 Interest keywords help order similar paths. School/provider and
                 physical notes stay as personal context. Credentials and
@@ -2554,7 +2670,8 @@ export default function Home() {
                   </p>
                   {background.source && (
                     <p className="microcopy">
-                      Education source: {background.source}
+                      Education sources:{' '}
+                      {background.source.split('\n').join(' · ')}
                       {background.major ? ` · ${background.major}` : ''}. Source
                       prestige is not scored.
                     </p>
@@ -3028,6 +3145,29 @@ export default function Home() {
             markets; zero measured exposure does not establish long-term safety.
           </p>
           <h3>Search and your broader profile.</h3>
+          <p>
+            School, hobby, and certification menus use local copies of public
+            catalogs. Schools cover U.S. colleges and training providers in NCES
+            IPEDS 2024; international schools and other providers can be added
+            manually. Certifications come from CareerOneStop’s July 2026
+            download. Hobbies use Wikidata’s community list, whose structured
+            data is CC0. Lists are suggestions, not proof of attendance,
+            proficiency, or a currently valid credential. Custom entries work
+            the same way.
+          </p>
+          {prefills &&
+            PREFILL_FIELDS.map((key) => (
+              <a
+                key={key}
+                href={prefills[key].url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {prefills[key].label} · {prefills[key].snapshot}
+                <ExternalLink size={13} />
+              </a>
+            ))}
+
           <p>
             Fuzzy search ranks official titles and O*NET alternate titles using
             subsequence, transposition, and trigram similarity, with exact

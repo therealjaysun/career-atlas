@@ -16,10 +16,100 @@ import {
   occupationLayout,
   careerLandscape,
   clusterLabels,
+  pickerSuggestions,
+  validPrefills,
+  PREFILL_FIELDS,
 } from '../lib/career.ts';
 const d = JSON.parse(
   readFileSync(new URL('../public/onet.json', import.meta.url)),
 );
+const prefills = JSON.parse(
+  readFileSync(new URL('../public/background-options.json', import.meta.url)),
+);
+assert(validPrefills(prefills));
+assert(!validPrefills(null));
+assert(
+  !validPrefills({
+    ...prefills,
+    source: { ...prefills.source, items: [{ id: 'bad', name: 42 }] },
+  }),
+);
+assert(
+  !validPrefills({
+    ...prefills,
+    source: {
+      ...prefills.source,
+      items: [prefills.source.items[0], prefills.source.items[0]],
+    },
+  }),
+);
+for (const key of PREFILL_FIELDS) {
+  assert(prefills[key].items.length >= 100);
+  assert.equal(
+    new Set(prefills[key].items.map((item) => item.name.toLowerCase())).size,
+    prefills[key].items.length,
+  );
+}
+assert(
+  pickerSuggestions(prefills.source.items, 'MIT')[0].name.includes(
+    'Massachusetts Institute of Technology',
+  ),
+);
+assert(
+  pickerSuggestions(prefills.training.items, 'PMP')
+    .slice(0, 5)
+    .some((item) => item.name.includes('Project Management Professional')),
+);
+assert.equal(
+  pickerSuggestions(prefills.hobbies.items, 'woodwroking')[0].name,
+  'woodworking',
+);
+const custom = pickerSuggestions(
+  [],
+  '  My school, north campus  ',
+  [],
+  true,
+)[0];
+assert.equal(custom.name, 'My school, north campus');
+assert(custom.custom);
+assert.equal(
+  pickerSuggestions([], 'My school, north campus', [custom], true).length,
+  1,
+);
+assert.equal(
+  pickerSuggestions([], 'MY SCHOOL, NORTH CAMPUS', [custom], true).length,
+  1,
+);
+assert.equal(pickerSuggestions([], '   ', [], true).length, 0);
+assert.equal(pickerSuggestions([], 'Unlisted', [], false).length, 0);
+assert.equal(
+  pickerSuggestions([{ id: 'cpp', name: 'C++' }], 'C#', [], true).at(-1).name,
+  'C#',
+);
+const selected = [
+  custom,
+  prefills.hobbies.items.find((item) => item.name === 'photography'),
+];
+const stored = selected.map((item) => item.name).join('\n');
+assert.deepEqual(stored.split('\n'), [
+  'My school, north campus',
+  'photography',
+]);
+assert(
+  pickerSuggestions(
+    prefills.hobbies.items,
+    'photography',
+    selected,
+    true,
+  ).every((item) => item.id !== 'custom:photography'),
+);
+for (const key of ['source', 'training']) {
+  const start = performance.now();
+  pickerSuggestions(prefills[key].items, 'certified professional', [], true);
+  console.log(
+    `${key} suggestions searched in ${(performance.now() - start).toFixed(0)}ms`,
+  );
+}
 const dev = d.occupations.find((o) => o.id === '15-1252.00');
 const clerk = d.occupations.find((o) => o.id === '41-2011.00');
 const skillMap = occupationLayout(d, 'skills');

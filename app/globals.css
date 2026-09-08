@@ -2492,3 +2492,24 @@ footer .mobile-info {
 .detail-meta {
   flex-wrap: wrap;
 }
+
+.multi-picker-entry {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 6px;
+}
+.job-chips .multi-picker-entry input {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  flex-basis: 0;
+}
+.multi-picker-entry .icon-button {
+  flex: 0 0 auto;
+}
+.microcopy a {
+  color: #ccb3e8;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
