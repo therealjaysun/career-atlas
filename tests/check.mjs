@@ -12,12 +12,57 @@ import {
   EMPTY_BACKGROUND,
   aiValue,
   aiLabel,
+  compileSkills,
 } from '../lib/career.ts';
 const d = JSON.parse(
   readFileSync(new URL('../public/onet.json', import.meta.url)),
 );
 const dev = d.occupations.find((o) => o.id === '15-1252.00');
 const clerk = d.occupations.find((o) => o.id === '41-2011.00');
+// Multiple jobs produce one row per skill, with every source and no inflated levels.
+const jobs = [
+  { ...dev, skills: [2, null, 4] },
+  { ...clerk, skills: [5, 3, 0] },
+];
+const skillNames = [
+  { name: 'Communication' },
+  { name: 'Service' },
+  { name: 'Writing' },
+  { name: 'Planning' },
+];
+const ratings = { 0: 0, 3: 2.5 };
+const combined = compileSkills([...jobs, jobs[0]], ratings, skillNames);
+assert.equal(combined.length, 4);
+assert.equal(new Set(combined.map((s) => s.id)).size, 4);
+const communication = combined.find((s) => s.id === '0');
+assert.equal(communication.suggestedLevel, 5);
+assert.equal(communication.sources.length, 2);
+assert.equal(communication.level, 0); // A user's zero rating wins over job suggestions.
+assert.equal(communication.confirmed, true);
+assert.equal(combined.find((s) => s.id === '1').confirmed, false);
+assert.equal(combined.find((s) => s.id === '3').level, 2.5);
+assert.deepEqual(ratings, { 0: 0, 3: 2.5 });
+assert.equal(
+  compileSkills([jobs[0]], {}, skillNames).find((s) => s.id === '0').level,
+  2,
+);
+assert(!compileSkills([jobs[0]], {}, skillNames).some((s) => s.id === '1'));
+assert.deepEqual(
+  compileSkills([], ratings, skillNames).map((s) => s.id),
+  ['0', '3'],
+);
+assert.equal(
+  compileSkills([{ ...dev, skills: [NaN, null, 0] }], {}, skillNames).length,
+  0,
+);
+const allSuggested = compileSkills([dev, clerk], {}, d.skills);
+assert.equal(
+  allSuggested.length,
+  new Set(
+    [dev, clerk].flatMap((o) => o.skills.flatMap((v, i) => (v > 0 ? [i] : []))),
+  ).size,
+);
+assert(allSuggested.every((s) => !s.confirmed && s.level <= 7));
 assert.equal(d.occupations.length, 923);
 assert.equal(new Set(d.occupations.map((o) => o.id)).size, 923);
 assert.equal(wageAt(dev, 2).value, 135980);

@@ -56,6 +56,10 @@ One optional WebMCP tool (`explore_occupation`) is registered only in supporting
 
 ## Broader profiles and fuzzy search
 
+Previous jobs support multiple title selections. The **My skills** window compiles every reported positive skill level from those jobs alongside the user's own additions. Each skill appears once, showing all contributing jobs; its suggested level is the highest reported level, never a sum. Suggestions stay outside career scoring until checked, rated, or explicitly accepted together. Existing ratings, including zero, always win and remain when a job is removed. Unrated suggestions from removed jobs disappear when no remaining job supplies them.
+
+The window also supports selecting and adding several skills together. New manual additions start at 3/7 for review, preserving any existing ratings. Editing skill ratings updates the map; learning scenarios remain separate. These entries remain local to the current tab.
+
 Title search ranks canonical and alternate O*NET titles with installed cmdk's subsequence/transposition matching, plus a short trigram fallback for substitutions. Exact task text remains searchable. Database results preserve relevance order; occupation pickers show the nearest 50 matches. Deferred inputs keep typing responsive. This is local search, not an embedding service.
 
 Education has distinct master’s, doctorate, and professional entries, all mapping to graduate preparation proxy 5. Major, training, hobbies, talents, and athletic experience provide **keyword affinity** as a final tie-breaker and suggest skills to confirm. Entering a credential never automatically grants a skill or a license. School/provider and physical notes remain personal context, without prestige or medical scoring. Optional ability ratings use the O*NET 0–7 level scale; role demands more than 0.5 above a self-rating add a trade-off caution. Unknown ability data remains unknown, and accommodations/actual job conditions require review.

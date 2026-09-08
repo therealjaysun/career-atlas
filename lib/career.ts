@@ -99,6 +99,40 @@ export type Dataset = {
   wageRetrieved?: string;
 };
 export type Profile = Record<string, number>;
+export function compileSkills(
+  jobs: Occupation[],
+  profile: Profile,
+  skills: { name: string }[],
+) {
+  const uniqueJobs = [...new Map(jobs.map((job) => [job.id, job])).values()];
+  return skills
+    .map((skill, index) => {
+      const sources = uniqueJobs.flatMap((job) => {
+        const level = job.skills[index];
+        return level != null &&
+          Number.isFinite(level) &&
+          level > 0 &&
+          level <= 7
+          ? [{ id: job.id, title: job.title, level }]
+          : [];
+      });
+      const rating = profile[index];
+      const confirmed = Number.isFinite(rating) && rating >= 0 && rating <= 7;
+      const suggestedLevel = sources.length
+        ? Math.max(...sources.map((s) => s.level))
+        : null;
+      return {
+        id: String(index),
+        name: skill.name,
+        sources,
+        suggestedLevel,
+        confirmed,
+        level: confirmed ? rating : (suggestedLevel ?? 0),
+      };
+    })
+    .filter((skill) => skill.confirmed || skill.sources.length > 0)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
 export const EDUCATION = [
   'Not provided',
   'No degree / high school',

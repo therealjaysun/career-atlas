@@ -34,6 +34,13 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import {
@@ -48,6 +55,11 @@ import {
   ComboboxList,
   ComboboxItem,
   ComboboxEmpty,
+  ComboboxChips,
+  ComboboxChip,
+  ComboboxChipsInput,
+  ComboboxValue,
+  useComboboxAnchor,
 } from '@/components/ui/combobox';
 import {
   Select,
@@ -64,6 +76,7 @@ import {
 } from '@/components/ui/sheet';
 import {
   alignment,
+  compileSkills,
   pathQuality,
   QUALITY,
   DEFAULT_CRITERIA,
@@ -272,15 +285,82 @@ function Picker({
     </Combobox>
   );
 }
+function JobPicker({
+  items,
+  values,
+  onChange,
+}: {
+  items: SearchItem[];
+  values: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const deferredSearch = useDeferredValue(search);
+  const anchor = useComboboxAnchor();
+  const filtered = useMemo(
+    () =>
+      items
+        .map((item) => ({ item, score: titleScore(item, deferredSearch) }))
+        .filter((x) => x.score >= 0.025)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 50)
+        .map((x) => x.item),
+    [items, deferredSearch],
+  );
+  return (
+    <Combobox
+      multiple
+      items={items}
+      filteredItems={filtered}
+      value={values
+        .map((id) => items.find((item) => item.id === id))
+        .filter((item): item is SearchItem => !!item)}
+      onValueChange={(items) =>
+        onChange([...new Set(items.map((item) => item.id))])
+      }
+      onInputValueChange={setSearch}
+      itemToStringLabel={(item) => item.name}
+      isItemEqualToValue={(a, b) => a.id === b.id}
+    >
+      <ComboboxChips ref={anchor} className="job-chips">
+        <ComboboxValue>
+          {(selected: SearchItem[]) =>
+            selected.map((item) => (
+              <ComboboxChip key={item.id} aria-label={item.name}>
+                {item.name}
+              </ComboboxChip>
+            ))
+          }
+        </ComboboxValue>
+        <ComboboxChipsInput
+          aria-label="Add previous jobs"
+          placeholder="Search and add another job…"
+        />
+      </ComboboxChips>
+      <ComboboxContent anchor={anchor} className="picker-popup">
+        <ComboboxEmpty>No close titles found.</ComboboxEmpty>
+        <ComboboxList>
+          {(item: SearchItem) => (
+            <ComboboxItem key={item.id} value={item}>
+              {item.name}
+            </ComboboxItem>
+          )}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
+  );
+}
 export default function Home() {
   const [data, setData] = useState<Dataset | null>(null),
     [error, setError] = useState('');
   const [mode, setMode] = useState('career'),
     [collapsed, setCollapsed] = useState(false),
     [phase, setPhase] = useState(1);
-  const [role, setRole] = useState<string | null>(null),
+  const [roles, setRoles] = useState<string[]>([]),
     [profile, setProfile] = useState<Profile>({}),
-    [addSkill, setAddSkill] = useState<string | null>(null);
+    [skillsOpen, setSkillsOpen] = useState(false),
+    [skillDraft, setSkillDraft] = useState<string[]>([]),
+    [skillQuery, setSkillQuery] = useState('');
   const [planned, setPlanned] = useState<string | null>(null),
     [plannedLevel, setPlannedLevel] = useState(4),
     [zone, setZone] = useState(0);
@@ -330,7 +410,6 @@ export default function Home() {
     () => new Map(occupations.map((o) => [o.id, o])),
     [occupations],
   );
-  const currentRole = role ? byId.get(role) : null;
   const skillItems = useMemo(
     () => data?.skills.map((s, i) => ({ id: String(i), name: s.name })) ?? [],
     [data],
@@ -340,6 +419,27 @@ export default function Home() {
       occupations.map((o) => ({ id: o.id, name: o.title, aliases: o.aliases })),
     [occupations],
   );
+  const compiled = useMemo(
+    () =>
+      compileSkills(
+        occupations.filter((o) => roles.includes(o.id)),
+        profile,
+        data?.skills ?? [],
+      ),
+    [occupations, roles, profile, data],
+  );
+  const pendingSkills = compiled.filter((skill) => !skill.confirmed);
+  const availableSkills = skillItems.filter(
+    (skill) =>
+      profile[skill.id] === undefined && titleScore(skill, skillQuery) >= 0.025,
+  );
+  const addSkills = () => {
+    setProfile((p) => ({
+      ...Object.fromEntries(skillDraft.map((id) => [id, 3])),
+      ...p,
+    }));
+    setSkillDraft([]);
+  };
   const abilityItems = useMemo(
     () =>
       data?.abilities.map((a, i) => ({ id: String(i), name: a.name })) ?? [],
@@ -469,13 +569,6 @@ export default function Home() {
   );
   const detail = selected ? byId.get(selected) : null,
     hover = hovered ? byId.get(hovered) : null;
-  const suggestions = currentRole
-    ? currentRole.importance
-        .map((v, i) => ({ i, v: v ?? 0 }))
-        .filter((x) => currentRole.skills[x.i] !== null)
-        .sort((a, b) => b.v - a.v)
-        .slice(0, 6)
-    : [];
   const point = (o: { x: number; y: number }) => ({
     x: 100 + o.x * 1000,
     y: 80 + o.y * 620,
@@ -713,64 +806,43 @@ export default function Home() {
             <Bubble
               step="01 · YOUR EXPERIENCE"
               title="Start with what you know."
-              subtitle="A role you’ve held is a useful starting point."
+              subtitle="Add all the previous jobs you want to draw on."
               open={phase === 1}
               onOpenChange={(v) => setPhase(v ? 1 : 0)}
             >
-              <Picker
-                items={roleItems}
-                value={role}
-                onChange={setRole}
-                label="Previous occupation"
-                placeholder="Find a role you’ve worked in…"
-              />
-              {currentRole ? (
-                <>
-                  <div className="suggested-tags">
-                    {suggestions.slice(0, 3).map((s) => (
-                      <span key={s.i}>{data?.skills[s.i].name}</span>
-                    ))}
-                  </div>
-                  <p className="microcopy">
-                    Suggested skills from this occupation. Review the levels to
-                    reflect your own experience.
-                  </p>
+              <JobPicker items={roleItems} values={roles} onChange={setRoles} />
+              <p className="microcopy">
+                {roles.length} previous {roles.length === 1 ? 'job' : 'jobs'} ·{' '}
+                {compiled.filter((s) => s.sources.length).length} distinct
+                suggested skills. Review them in your skills window before using
+                them for matching.
+              </p>
+              <button
+                className="primary-button"
+                onClick={() => setSkillsOpen(true)}
+              >
+                Review combined skills
+                <ArrowUpRight size={17} />
+              </button>
+              {!roles.length && (
+                <div className="example-roles">
+                  Try{' '}
                   <button
-                    className="primary-button"
-                    onClick={() => {
-                      setProfile((p) => ({
-                        ...Object.fromEntries(
-                          suggestions.map((s) => [
-                            s.i,
-                            currentRole.skills[s.i] ?? 0,
-                          ]),
-                        ),
-                        ...p,
-                      }));
-                      setPhase(2);
-                    }}
+                    onClick={() =>
+                      setRoles((ids) => [...new Set([...ids, '15-1252.00'])])
+                    }
                   >
-                    Review my skills
-                    <ArrowUpRight size={17} />
+                    Software developer
                   </button>
-                </>
-              ) : (
-                <>
-                  <div className="example-roles">
-                    Try{' '}
-                    <button onClick={() => setRole('15-1252.00')}>
-                      Software developer
-                    </button>
-                    <span>or</span>
-                    <button onClick={() => setRole('29-1141.00')}>
-                      Registered nurse
-                    </button>
-                  </div>
-                  <button className="text-button" onClick={() => setPhase(2)}>
-                    Or start with your skills
-                    <ChevronRight size={15} />
+                  <span>or</span>
+                  <button
+                    onClick={() =>
+                      setRoles((ids) => [...new Set([...ids, '29-1141.00'])])
+                    }
+                  >
+                    Registered nurse
                   </button>
-                </>
+                </div>
               )}
             </Bubble>
             <Bubble
@@ -844,7 +916,7 @@ export default function Home() {
                       key={s.i}
                       onClick={() => {
                         setProfile((p) => ({ ...p, [s.i]: 3 }));
-                        setPhase(2);
+                        setSkillsOpen(true);
                       }}
                     >
                       <span>
@@ -913,88 +985,45 @@ export default function Home() {
                 flag demands to review; accommodations and the actual workplace
                 can change those demands.
               </p>
-              <button className="primary-button" onClick={() => setPhase(2)}>
+              <button
+                className="primary-button"
+                onClick={() => setSkillsOpen(true)}
+              >
                 Continue to skills
                 <ArrowUpRight size={16} />
               </button>
             </Bubble>
-            <Bubble
-              step={`03 · YOUR SKILLS${Object.keys(profile).length ? ` · ${Object.keys(profile).length} ADDED` : ''}`}
-              title="What can you do?"
-              subtitle="Estimate your level from 0–7. Unrated skills stay unknown."
-              open={phase === 2}
-              onOpenChange={(v) => setPhase(v ? 2 : 0)}
-            >
-              <Picker
-                items={skillItems.filter((s) => profile[s.id] === undefined)}
-                value={addSkill}
-                onChange={(v) => {
-                  if (v !== null) {
-                    setProfile((p) => ({ ...p, [v]: 3 }));
-                    setAddSkill(null);
-                  }
-                }}
-                label="Add a skill"
-                placeholder="Add a skill…"
-              />
-              <div className="skill-list">
-                {Object.entries(profile).map(([id, level]) => (
-                  <div className="skill-row" key={id}>
-                    <div>
-                      <label id={`skill-${id}`}>
-                        {data?.skills[Number(id)]?.name}
-                      </label>
-                      <span>{level.toFixed(1)}</span>
-                      <button
-                        className="icon-button"
-                        aria-label={`Remove ${data?.skills[Number(id)]?.name}`}
-                        onClick={() =>
-                          setProfile((p) => {
-                            const next = { ...p };
-                            delete next[id];
-                            return next;
-                          })
-                        }
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                    <Slider
-                      aria-labelledby={`skill-${id}`}
-                      min={0}
-                      max={7}
-                      step={0.5}
-                      value={[level]}
-                      onValueChange={(v) =>
-                        setProfile((p) => ({
-                          ...p,
-                          [id]: Array.isArray(v) ? v[0] : v,
-                        }))
-                      }
-                    />
-                  </div>
-                ))}
+            <div className="bubble skills-summary">
+              <div className="step-label">03 · YOUR SKILLS</div>
+              <h2>Everything you bring.</h2>
+              <div className="skills-counts">
+                <strong>
+                  {Object.keys(profile).length}
+                  <span>rated skills</span>
+                </strong>
+                <strong>
+                  {pendingSkills.length}
+                  <span>to review</span>
+                </strong>
               </div>
-              {Object.keys(profile).length > 0 ? (
-                <>
-                  <p className="microcopy">
-                    Exploratory self-ratings. Alignment covers only the skills
-                    you’ve rated.
-                  </p>
-                  <button
-                    className="primary-button"
-                    onClick={() => setPhase(3)}
-                  >
-                    Explore my next chapter
-                    <ArrowUpRight size={17} />
-                  </button>
-                </>
-              ) : (
-                <p className="empty-hint">
-                  Add your first skill to light up the map.
-                </p>
+              <p className="microcopy">
+                Skills from every previous job and your own additions, together
+                in one window.
+              </p>
+              <button
+                className="primary-button"
+                onClick={() => setSkillsOpen(true)}
+              >
+                Open my skills
+                <ArrowUpRight size={17} />
+              </button>
+              {hasProfile && (
+                <button className="text-button" onClick={() => setPhase(3)}>
+                  Explore my next chapter
+                  <ChevronRight size={15} />
+                </button>
               )}
-            </Bubble>
+            </div>
             <Bubble
               step="04 · YOUR NEXT CHAPTER"
               title="What could you unlock?"
@@ -1969,6 +1998,202 @@ export default function Home() {
           <Info size={16} />
         </button>
       </footer>
+      <Dialog open={skillsOpen} onOpenChange={setSkillsOpen}>
+        <DialogContent className="skills-window">
+          <div className="skills-window-header">
+            <div className="eyebrow">YOUR COMBINED SKILL LIBRARY</div>
+            <DialogTitle>All your skills. One place.</DialogTitle>
+            <DialogDescription>
+              {roles.length} previous {roles.length === 1 ? 'job' : 'jobs'} ·{' '}
+              {Object.keys(profile).length} rated · {pendingSkills.length}{' '}
+              suggested. Check or rate a suggested skill to include it in career
+              matching.
+            </DialogDescription>
+          </div>
+          <div className="skills-workspace">
+            <section className="compiled-skills" aria-label="Compiled skills">
+              <div className="skills-section-heading">
+                <h3>
+                  Compiled skills <span>{compiled.length}</span>
+                </h3>
+                {!!pendingSkills.length && (
+                  <button
+                    className="text-button"
+                    onClick={() =>
+                      setProfile((p) => ({
+                        ...Object.fromEntries(
+                          pendingSkills.map((s) => [s.id, s.level]),
+                        ),
+                        ...p,
+                      }))
+                    }
+                  >
+                    Use all suggested levels
+                    <Check size={14} />
+                  </button>
+                )}
+              </div>
+              {!!pendingSkills.length && (
+                <p className="skills-note">
+                  Job suggestions use the highest reported level across your
+                  jobs, never a sum. Adjust them to reflect your own experience.
+                </p>
+              )}
+              {!compiled.length && (
+                <div className="skills-empty">
+                  <Sparkles size={28} />
+                  <h3>Start building your skill library.</h3>
+                  <p>
+                    Choose skills in “Add skills” or add previous jobs to
+                    compile their suggestions here.
+                  </p>
+                </div>
+              )}
+              <div className="compiled-skill-list">
+                {compiled.map((skill) => (
+                  <article
+                    className={`compiled-skill ${skill.confirmed ? 'is-rated' : ''}`}
+                    key={skill.id}
+                  >
+                    <div className="compiled-skill-heading">
+                      <Checkbox
+                        id={`use-skill-${skill.id}`}
+                        checked={skill.confirmed}
+                        aria-label={`Use ${skill.name} for matching`}
+                        onCheckedChange={(checked) =>
+                          setProfile((p) => {
+                            const next = { ...p };
+                            if (checked) next[skill.id] = skill.level;
+                            else delete next[skill.id];
+                            return next;
+                          })
+                        }
+                      />
+                      <label htmlFor={`use-skill-${skill.id}`}>
+                        {skill.name}
+                      </label>
+                      <span
+                        className={
+                          skill.confirmed ? 'rated-label' : 'suggested-label'
+                        }
+                      >
+                        {skill.confirmed ? 'Rated' : 'Suggested'}
+                      </span>
+                      <strong>
+                        {skill.level.toFixed(1)}
+                        <small> / 7</small>
+                      </strong>
+                    </div>
+                    <Slider
+                      aria-label={`${skill.name} level`}
+                      min={0}
+                      max={7}
+                      step={0.5}
+                      value={[skill.level]}
+                      onValueChange={(v) =>
+                        setProfile((p) => ({
+                          ...p,
+                          [skill.id]: Array.isArray(v) ? v[0] : v,
+                        }))
+                      }
+                    />
+                    <div className="skill-sources">
+                      {skill.sources.length ? (
+                        skill.sources.map((source) => (
+                          <span key={source.id}>
+                            {source.title} <b>{source.level.toFixed(1)}</b>
+                          </span>
+                        ))
+                      ) : (
+                        <span>Your own addition</span>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+            <section className="skill-catalog" aria-label="Add multiple skills">
+              <h3>Add skills</h3>
+              <p className="skills-note">
+                Choose several, then add them together. New ratings start at 3/7
+                for you to adjust.
+              </p>
+              <div className="input-shell">
+                <Search size={16} />
+                <input
+                  aria-label="Search skills to add"
+                  value={skillQuery}
+                  maxLength={160}
+                  placeholder="Find a skill…"
+                  onChange={(e) => setSkillQuery(e.target.value)}
+                />
+              </div>
+              <div className="skill-catalog-list">
+                {availableSkills.map((skill) => (
+                  <label
+                    className="catalog-skill"
+                    key={skill.id}
+                    htmlFor={`add-skill-${skill.id}`}
+                  >
+                    <Checkbox
+                      id={`add-skill-${skill.id}`}
+                      checked={skillDraft.includes(skill.id)}
+                      onCheckedChange={(checked) =>
+                        setSkillDraft((ids) =>
+                          checked
+                            ? [...new Set([...ids, skill.id])]
+                            : ids.filter((id) => id !== skill.id),
+                        )
+                      }
+                    />
+                    {skill.name}
+                  </label>
+                ))}
+                {!availableSkills.length && (
+                  <p className="skills-note">
+                    {skillQuery
+                      ? 'No unselected skills match this search.'
+                      : 'All available skills are already rated.'}
+                  </p>
+                )}
+              </div>
+              <button
+                className="primary-button"
+                disabled={!skillDraft.some((id) => profile[id] === undefined)}
+                onClick={addSkills}
+              >
+                Add{' '}
+                {skillDraft.filter((id) => profile[id] === undefined).length ||
+                  ''}{' '}
+                selected skills
+                <Plus size={16} />
+              </button>
+              {!!skillDraft.length && (
+                <button
+                  className="text-button"
+                  onClick={() => setSkillDraft([])}
+                >
+                  Clear selection
+                </button>
+              )}
+            </section>
+          </div>
+          <div className="skills-window-footer">
+            <p>
+              {planned !== null
+                ? `Learning scenario: ${data?.skills[Number(planned)].name} at ${Math.max(profile[planned] ?? 0, plannedLevel).toFixed(1)}/7. Kept separate from your current ratings.`
+                : 'Your ratings update the career map as you edit. Unrated suggestions stay unknown.'}
+            </p>
+            <button
+              className="primary-button"
+              onClick={() => setSkillsOpen(false)}
+            >
+              Done
+              <Check size={16} />
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Sheet
         open={!!detail}
         onOpenChange={(v) => {
