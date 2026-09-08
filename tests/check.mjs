@@ -15,6 +15,7 @@ import {
   compileSkills,
   occupationLayout,
   careerLandscape,
+  clusterLabels,
 } from '../lib/career.ts';
 const d = JSON.parse(
   readFileSync(new URL('../public/onet.json', import.meta.url)),
@@ -161,6 +162,36 @@ const focused = careerLandscape(d.occupations, d.clusters, outcome, true);
 console.log(
   `Compacted ${focused.occupations.length} career roles in ${(performance.now() - before).toFixed(0)}ms`,
 );
+// Real title boxes must stay distinct and inside the map at representative zoom levels.
+assert.deepEqual(clusterLabels([], 1), []);
+for (const clusters of [
+  d.clusters,
+  d.layouts.skills.clusters,
+  focused.clusters,
+]) {
+  for (const zoom of [0.7, 1, 2, 5]) {
+    const labels = clusterLabels(clusters, zoom);
+    assert.equal(labels.length, clusters.length);
+    for (const [i, label] of labels.entries()) {
+      assert(
+        label.x >= 0 &&
+          label.y >= 0 &&
+          label.x + label.width <= 1200 &&
+          label.y + label.height <= 800,
+      );
+      assert.equal(label.lines.join(' '), label.name.replaceAll(' · ', ' '));
+      assert(label.lines.every((line) => line.length <= 26));
+      for (const other of labels.slice(i + 1))
+        assert(
+          label.x + label.width <= other.x ||
+            other.x + other.width <= label.x ||
+            label.y + label.height <= other.y ||
+            other.y + other.height <= label.y,
+          `Overlapping titles ${label.id}/${other.id} at zoom ${zoom}`,
+        );
+    }
+  }
+}
 const survivors = new Set(focused.occupations.map((o) => o.id));
 assert(survivors.has(dev.id) && !survivors.has(clerk.id));
 assert.equal(

@@ -76,6 +76,78 @@ export type Cluster = {
   featureBasis?: 'relative-demand' | 'reported-level';
 };
 export type ClusterBasis = 'activities' | 'skills';
+export function clusterLabels(clusters: Cluster[], zoom: number) {
+  const scale = 1 / Math.sqrt(zoom);
+  const placed: { x: number; y: number; width: number; height: number }[] = [];
+  return clusters.map((c) => {
+    const lines = c.name.split(' · ').flatMap((part) => {
+      const rows = [''];
+      for (const word of part.split(/\s+/)) {
+        const last = rows.length - 1;
+        if (rows[last] && rows[last].length + word.length + 1 > 26)
+          rows.push(word);
+        else rows[last] += `${rows[last] ? ' ' : ''}${word}`;
+      }
+      return rows;
+    });
+    // ponytail: conservative text-width estimates avoid DOM measurement; use font metrics if labels become multilingual.
+    const width =
+      (Math.max(...lines.map((line) => line.length)) * 8.4 + 20) * scale;
+    const height = (lines.length * 18 + 12) * scale;
+    const anchorX = 100 + c.x * 1000,
+      anchorY = 80 + c.y * 620;
+    let best = { x: 0, y: 0, score: Infinity };
+    for (let dx = -3; dx <= 3; dx++) {
+      for (let dy = -4; dy <= 4; dy++) {
+        const x = Math.max(
+          12,
+          Math.min(1188 - width, anchorX - width / 2 + dx * width * 0.65),
+        );
+        const y = Math.max(
+          12,
+          Math.min(
+            788 - height,
+            anchorY - height - 20 * scale + dy * (height + 14 * scale),
+          ),
+        );
+        const overlap = placed.reduce(
+          (sum, p) =>
+            sum +
+            Math.max(
+              0,
+              Math.min(x + width + 8 * scale, p.x + p.width) -
+                Math.max(x - 8 * scale, p.x),
+            ) *
+              Math.max(
+                0,
+                Math.min(y + height + 8 * scale, p.y + p.height) -
+                  Math.max(y - 8 * scale, p.y),
+              ),
+          0,
+        );
+        const score =
+          overlap * 1e6 +
+          (x + width / 2 - anchorX) ** 2 +
+          (y + height + 20 * scale - anchorY) ** 2;
+        if (score < best.score) best = { x, y, score };
+      }
+    }
+    const label = {
+      id: c.id,
+      name: c.name,
+      lines,
+      width,
+      height,
+      x: best.x,
+      y: best.y,
+      anchorX,
+      anchorY,
+      scale,
+    };
+    placed.push(label);
+    return label;
+  });
+}
 export type Dataset = {
   version: string;
   excluded: number;

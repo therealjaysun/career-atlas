@@ -828,15 +828,13 @@ footer > span {
   stroke-width: 2px;
 }
 .cluster-label text {
-  letter-spacing: 0.6px;
+  letter-spacing: 0.15px;
   font-weight: 500;
-  paint-order: stroke;
-  stroke: #15151e;
-  stroke-width: 6px;
-  stroke-linejoin: round;
 }
 .cluster-label {
   pointer-events: none;
+}
+.cluster-label > g {
   transition:
     opacity 0.35s,
     transform 0.65s cubic-bezier(0.2, 0.7, 0.2, 1);

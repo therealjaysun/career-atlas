@@ -79,6 +79,7 @@ import {
   compileSkills,
   pathQuality,
   careerLandscape,
+  clusterLabels,
   QUALITY,
   DEFAULT_CRITERIA,
   type Criteria,
@@ -202,9 +203,9 @@ function ExposureRing({
         <circle
           cx={x}
           cy={y}
-          r={radius + 3}
+          r={radius + 1}
           fill="#981f3b"
-          opacity={0.12 + value! * 0.22}
+          opacity={0.08 + value! * 0.1}
         />
       )}
       <circle
@@ -548,6 +549,10 @@ export default function Home() {
   const landscape = useMemo(
     () => careerLandscape(candidates, activeClusters, quality, focusPaths),
     [candidates, activeClusters, quality, focusPaths],
+  );
+  const labels = useMemo(
+    () => clusterLabels(landscape.clusters, view.k),
+    [landscape.clusters, view.k],
   );
   const visible = landscape.occupations;
   const mapById = useMemo(
@@ -1657,12 +1662,12 @@ export default function Home() {
             <defs>
               <filter
                 id="node-glow"
-                x="-200%"
-                y="-200%"
-                width="500%"
-                height="500%"
+                x="-50%"
+                y="-50%"
+                width="200%"
+                height="200%"
               >
-                <feGaussianBlur stdDeviation="5" />
+                <feGaussianBlur stdDeviation={1.2 / Math.sqrt(view.k)} />
               </filter>
             </defs>
             <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
@@ -1696,34 +1701,6 @@ export default function Home() {
                       }),
                   )}
               </g>
-              {!isTree &&
-                landscape.clusters.map((c) => {
-                  const p = point(c);
-                  return (
-                    <g
-                      key={c.id}
-                      className="cluster-label"
-                      style={{ transform: `translate(${p.x}px,${p.y - 35}px)` }}
-                      aria-hidden="true"
-                    >
-                      <text
-                        textAnchor="middle"
-                        fill={COLORS[c.id]}
-                        style={{ fontSize: `${12 / Math.sqrt(view.k)}px` }}
-                      >
-                        {c.name.split(' · ').map((part, i) => (
-                          <tspan
-                            key={part}
-                            x={0}
-                            dy={i ? 15 / Math.sqrt(view.k) : 0}
-                          >
-                            {part}
-                          </tspan>
-                        ))}
-                      </text>
-                    </g>
-                  );
-                })}
               {isTree && (
                 <g className="tree-branches" aria-hidden="true">
                   <circle
@@ -1770,7 +1747,11 @@ export default function Home() {
                           fill={COLORS[b.id]}
                           fontSize={15}
                         >
-                          {clusterNames[b.id]}
+                          {clusterNames[b.id].split(' · ').map((part, i) => (
+                            <tspan key={part} x={325} dy={i ? 17 : 0}>
+                              {part}
+                            </tspan>
+                          ))}
                         </text>
                         {b.roles.map((o) => {
                           const p = treePositions.get(o.id)!;
@@ -1893,9 +1874,9 @@ export default function Home() {
                       <circle
                         cx={p.x}
                         cy={p.y}
-                        r={active ? 12 : 8}
+                        r={(active ? 7 : 4.5) / Math.sqrt(view.k)}
                         fill={fill}
-                        opacity={active ? 0.55 : 0.23}
+                        opacity={active ? 0.35 : 0.16}
                         filter="url(#node-glow)"
                       />
                     )}
@@ -1956,6 +1937,52 @@ export default function Home() {
                   </g>
                 );
               })}
+              {!isTree &&
+                labels.map((label) => (
+                  <g
+                    key={label.id}
+                    className="cluster-label"
+                    aria-hidden="true"
+                  >
+                    <line
+                      x1={label.anchorX}
+                      y1={label.anchorY}
+                      x2={label.x + label.width / 2}
+                      y2={label.y + label.height / 2}
+                      stroke={COLORS[label.id]}
+                      strokeWidth={0.8 * label.scale}
+                      opacity={0.45}
+                    />
+                    <g
+                      style={{
+                        transform: `translate(${label.x}px,${label.y}px)`,
+                      }}
+                    >
+                      <rect
+                        width={label.width}
+                        height={label.height}
+                        rx={5 * label.scale}
+                        fill="#15151e"
+                        fillOpacity={0.94}
+                      />
+                      <text
+                        textAnchor="middle"
+                        fill={COLORS[label.id]}
+                        fontSize={14 * label.scale}
+                      >
+                        {label.lines.map((line, i) => (
+                          <tspan
+                            key={i}
+                            x={label.width / 2}
+                            y={(19 + i * 18) * label.scale}
+                          >
+                            {line}
+                          </tspan>
+                        ))}
+                      </text>
+                    </g>
+                  </g>
+                ))}
             </g>
           </svg>
         )}
