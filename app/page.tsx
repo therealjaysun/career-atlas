@@ -89,7 +89,6 @@ import {
   COLORS,
   searchOccupations,
   titleScore,
-  backgroundOverlap,
   EDUCATION,
   ENTRY_PATHS,
   EMPTY_BACKGROUND,
@@ -110,6 +109,12 @@ import {
   type Dataset,
   type Profile,
 } from '@/lib/career';
+import {
+  connectBackground,
+  connectionStrength,
+  schoolPrograms,
+  schoolMajorEvidence,
+} from '@/lib/background';
 
 const BACKGROUND_FIELDS: {
   key: keyof Background;
@@ -402,6 +407,11 @@ export default function Home() {
   const [showAllPaths, setShowAllPaths] = useState(false);
   const [background, setBackground] = useState<Background>(EMPTY_BACKGROUND);
   const deferredBackground = useDeferredValue(background);
+  const [connectionOverrides, setConnectionOverrides] = useState<
+    Record<string, string[]>
+  >({});
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [schoolFieldsOnly, setSchoolFieldsOnly] = useState(false);
   const [abilities, setAbilities] = useState<Profile>({});
   const [aiOverlay, setAiOverlay] = useState(true),
     [aiMetric, setAiMetric] = useState<AIMetric>('observed'),
@@ -493,16 +503,34 @@ export default function Home() {
       occupations.map((o) => ({ id: o.id, name: o.title, aliases: o.aliases })),
     [occupations],
   );
+  const connections = useMemo(
+    () =>
+      connectBackground(
+        deferredBackground,
+        prefills,
+        data,
+        connectionOverrides,
+      ),
+    [deferredBackground, prefills, data, connectionOverrides],
+  );
+  const reportedPrograms = useMemo(
+    () => schoolPrograms(connections),
+    [connections],
+  );
   const compiled = useMemo(
     () =>
       compileSkills(
         occupations.filter((o) => roles.includes(o.id)),
         profile,
         data?.skills ?? [],
+        connections,
       ),
-    [occupations, roles, profile, data],
+    [occupations, roles, profile, data, connections],
   );
   const pendingSkills = compiled.filter((skill) => !skill.confirmed);
+  const jobSuggestions = pendingSkills.filter(
+    (skill) => skill.suggestedLevel !== null,
+  );
   const availableSkills = skillItems.filter(
     (skill) =>
       profile[skill.id] === undefined && titleScore(skill, skillQuery) >= 0.025,
@@ -519,34 +547,19 @@ export default function Home() {
       data?.abilities.map((a, i) => ({ id: String(i), name: a.name })) ?? [],
     [data],
   );
-  const overlaps = useMemo(
+  const backgroundAffinities = useMemo(
     () =>
       new Map(
         occupations.map((o) => [
           o.id,
-          backgroundOverlap(o, deferredBackground),
+          connections.reduce((sum, c) => sum + connectionStrength(o, c), 0),
         ]),
       ),
-    [occupations, deferredBackground],
+    [occupations, connections],
   );
-  const backgroundSkills = useMemo(() => {
-    const related = occupations
-      .filter((o) => (overlaps.get(o.id)?.length ?? 0) > 0)
-      .sort((a, b) => overlaps.get(b.id)!.length - overlaps.get(a.id)!.length)
-      .slice(0, 3);
-    return related
-      .flatMap((o) =>
-        o.importance
-          .map((v, i) => ({ i, v: v ?? 0, role: o.title }))
-          .sort((a, b) => b.v - a.v)
-          .slice(0, 3),
-      )
-      .filter(
-        (s, i, a) =>
-          profile[s.i] === undefined && a.findIndex((x) => x.i === s.i) === i,
-      )
-      .slice(0, 5);
-  }, [occupations, overlaps, profile]);
+  const backgroundSkills = compiled.filter(
+    (s) => !s.confirmed && s.sources.some((source) => source.level === null),
+  );
   const effectiveProfile = useMemo(
     () =>
       planned === null
@@ -621,11 +634,11 @@ export default function Home() {
           ? QUALITY[quality.get(b.id)!.status].order -
               QUALITY[quality.get(a.id)!.status].order ||
             (scores.get(b.id)?.score ?? -1) - (scores.get(a.id)?.score ?? -1) ||
-            (overlaps.get(b.id)?.length ?? 0) -
-              (overlaps.get(a.id)?.length ?? 0)
+            (backgroundAffinities.get(b.id) ?? 0) -
+              (backgroundAffinities.get(a.id) ?? 0)
           : 0,
       ),
-    [visible, mode, scores, quality, overlaps],
+    [visible, mode, scores, quality, backgroundAffinities],
   );
   const isTree = mode === 'career' && layout === 'tree';
   const branches = useMemo(
@@ -946,9 +959,13 @@ export default function Home() {
               />
               <p className="microcopy">
                 {roles.length} previous {roles.length === 1 ? 'job' : 'jobs'} ·{' '}
-                {compiled.filter((s) => s.sources.length).length} distinct
-                suggested skills. Review them in your skills window before using
-                them for matching.
+                {
+                  compiled.filter((s) =>
+                    s.sources.some((source) => source.level !== null),
+                  ).length
+                }{' '}
+                distinct suggested skills. Review them in your skills window
+                before using them for matching.
               </p>
               <button
                 className="primary-button"
@@ -1017,11 +1034,29 @@ export default function Home() {
                     >
                       {field.label}
                     </label>
+                    {field.key === 'major' && reportedPrograms.size > 0 && (
+                      <label className="school-field-filter">
+                        <Checkbox
+                          checked={schoolFieldsOnly}
+                          onCheckedChange={(v) => setSchoolFieldsOnly(!!v)}
+                        />
+                        Only fields reported by my schools (
+                        {reportedPrograms.size})
+                      </label>
+                    )}
                     {key ? (
                       <>
                         <MultiPicker
                           id={`background-${field.key}`}
-                          items={source?.items ?? []}
+                          items={
+                            field.key === 'major' &&
+                            schoolFieldsOnly &&
+                            reportedPrograms.size
+                              ? (source?.items.filter((item) =>
+                                  reportedPrograms.has(item.id),
+                                ) ?? [])
+                              : (source?.items ?? [])
+                          }
                           values={background[field.key]
                             .split('\n')
                             .filter(Boolean)
@@ -1092,34 +1127,34 @@ export default function Home() {
                 );
               })}
               <p className="microcopy">
-                Interest keywords help order similar paths. School/provider and
-                physical notes stay as personal context. Credentials and
-                proficiency need your confirmation. Profile entries stay in this
-                tab.
+                Fields of study and credentials connect to occupations;
+                interests suggest skills to review. School records describe
+                reported programs, not what you completed. Rate skills to use
+                them for fit.
               </p>
+              {connections.length > 0 && (
+                <button
+                  className="primary-button"
+                  onClick={() => setConnectionsOpen(true)}
+                >
+                  View background connections <ArrowUpRight size={16} />
+                </button>
+              )}
               {backgroundSkills.length > 0 && (
                 <div className="background-suggestions">
-                  <div className="section-label">Skills to consider</div>
+                  <div className="section-label">
+                    {backgroundSkills.length} connected skills to review
+                  </div>
                   <p className="microcopy">
-                    From roles related to your interests. Add only skills you
-                    have, then adjust the suggested starting level.
+                    Your skills window now includes suggestions from every
+                    mapped background entry. No proficiency is assumed.
                   </p>
-                  {backgroundSkills.map((s) => (
-                    <button
-                      className="suggestion-row"
-                      key={s.i}
-                      onClick={() => {
-                        setProfile((p) => ({ ...p, [s.i]: 3 }));
-                        setSkillsOpen(true);
-                      }}
-                    >
-                      <span>
-                        {data?.skills[s.i].name}
-                        <small>Related role: {s.role}</small>
-                      </span>
-                      <Plus size={14} />
-                    </button>
-                  ))}
+                  <button
+                    className="text-button"
+                    onClick={() => setSkillsOpen(true)}
+                  >
+                    Review combined skills <ArrowUpRight size={16} />
+                  </button>
                 </div>
               )}
               <div className="field-label">
@@ -2349,6 +2384,212 @@ export default function Home() {
           <Info size={16} />
         </button>
       </footer>
+      <Dialog open={connectionsOpen} onOpenChange={setConnectionsOpen}>
+        <DialogContent className="skills-window connections-window">
+          <div className="skills-window-header">
+            <div className="eyebrow">YOUR BACKGROUND → SKILLS → CAREERS</div>
+            <DialogTitle>See how everything connects.</DialogTitle>
+            <DialogDescription>
+              Review the source behind each link. Edit skill connections to
+              match what you actually learned, then rate them in your skills
+              window.
+            </DialogDescription>
+          </div>
+          <div className="connection-list">
+            {connectionsOpen &&
+              connections.map((connection, index) => {
+                const related = occupations
+                  .map((o) => ({
+                    o,
+                    strength: connectionStrength(o, connection),
+                  }))
+                  .filter((entry) =>
+                    connection.occupations.length
+                      ? connection.occupations.includes(entry.o.id)
+                      : entry.strength > 0,
+                  )
+                  .sort(
+                    (a, b) =>
+                      b.strength - a.strength ||
+                      a.o.title.localeCompare(b.o.title),
+                  );
+                const fields =
+                  prefills?.major.items.filter((m) =>
+                    connection.item?.programs?.some((p) => p.id === m.id),
+                  ) ?? [];
+                return (
+                  <details className="connection-card" key={connection.id}>
+                    <summary>
+                      <strong>{connection.name}</strong>
+                      <span>
+                        {connection.field === 'source'
+                          ? `${fields.length} reported fields`
+                          : `${connection.occupations.length} occupation links · ${connection.skills.length} skills`}
+                      </span>
+                    </summary>
+                    <p className="microcopy">
+                      {connection.url ? (
+                        <a
+                          href={connection.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {connection.basis}
+                        </a>
+                      ) : (
+                        connection.basis
+                      )}
+                      .
+                      {connection.occupations.length > 0 &&
+                        ' Linked-role skills are suggestions from O*NET, not a curriculum or proof of competence.'}
+                      {Object.hasOwn(connectionOverrides, connection.id) &&
+                        ' Skill connections edited by you.'}
+                    </p>
+                    {connection.field === 'source' && (
+                      <>
+                        <p className="microcopy">
+                          School → field you studied → related occupations →
+                          skills to review. Only choose programs you actually
+                          studied. Missing records do not invalidate your
+                          education.
+                        </p>
+                        {fields.length > 0 && (
+                          <Picker
+                            items={fields}
+                            value={null}
+                            label={`Add a field studied at ${connection.name}`}
+                            placeholder="Find a field reported by this school…"
+                            onChange={(id) => {
+                              const major = fields.find((m) => m.id === id);
+                              if (major)
+                                setBackground((b) => ({
+                                  ...b,
+                                  major: [
+                                    ...new Set([
+                                      ...b.major.split('\n').filter(Boolean),
+                                      major.name,
+                                    ]),
+                                  ].join('\n'),
+                                }));
+                            }}
+                          />
+                        )}
+                        {connections
+                          .filter((c) => c.field === 'major')
+                          .map((major) => (
+                            <p className="microcopy" key={major.id}>
+                              <strong>{major.name}</strong>
+                              <br />
+                              {schoolMajorEvidence(
+                                connection.item,
+                                major.item,
+                                criteria.education,
+                              )}
+                            </p>
+                          ))}
+                      </>
+                    )}
+                    {!connection.skills.length && (
+                      <p className="microcopy">
+                        No skill links yet. Add the skills you practiced below.
+                      </p>
+                    )}
+                    <label
+                      className="field-label"
+                      htmlFor={`connection-skills-${index}`}
+                    >
+                      Skills connected to this entry
+                    </label>
+                    <MultiPicker
+                      id={`connection-skills-${index}`}
+                      items={skillItems}
+                      values={skillItems.filter((skill) =>
+                        connection.skills.includes(skill.id),
+                      )}
+                      onChange={(items) =>
+                        setConnectionOverrides((links) => ({
+                          ...links,
+                          [connection.id]: items.map((item) => item.id),
+                        }))
+                      }
+                      label={`Skills connected to ${connection.name}`}
+                      placeholder="Link the skills you practiced…"
+                    />
+                    {Object.hasOwn(connectionOverrides, connection.id) && (
+                      <button
+                        className="text-button"
+                        onClick={() =>
+                          setConnectionOverrides((links) => {
+                            const next = { ...links };
+                            delete next[connection.id];
+                            return next;
+                          })
+                        }
+                      >
+                        Reset suggested connections
+                      </button>
+                    )}
+                    {related.length > 0 && (
+                      <div className="connection-roles">
+                        <p className="microcopy">
+                          {connection.occupations.length
+                            ? `${connection.occupations.length} officially linked occupations; preview below.`
+                            : 'Example roles using these skills. Interest links do not establish fit.'}
+                        </p>
+                        {related.slice(0, 5).map(({ o }) => (
+                          <button
+                            className="suggestion-row"
+                            key={o.id}
+                            onClick={() => {
+                              setConnectionsOpen(false);
+                              roleSelect(o.id);
+                            }}
+                          >
+                            <span>{o.title}</span>
+                            <ArrowUpRight size={14} />
+                          </button>
+                        ))}
+                        {related.length > 5 && (
+                          <Picker
+                            items={related.map(({ o }) => ({
+                              id: o.id,
+                              name: o.title,
+                              aliases: o.aliases,
+                            }))}
+                            value={null}
+                            label={`Search all roles connected to ${connection.name}`}
+                            placeholder={`Search all ${related.length} connected roles…`}
+                            onChange={(id) => {
+                              if (id) {
+                                setConnectionsOpen(false);
+                                roleSelect(id);
+                              }
+                            }}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </details>
+                );
+              })}
+          </div>
+          <div className="skills-window-footer">
+            <p>
+              Related paths, not admissions, licensing, or employer
+              requirements.
+            </p>
+            <button
+              className="primary-button"
+              onClick={() => {
+                setConnectionsOpen(false);
+                setSkillsOpen(true);
+              }}
+            >
+              Rate connected skills <ArrowUpRight size={15} />
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog open={skillsOpen} onOpenChange={setSkillsOpen}>
         <DialogContent className="skills-window">
           <div className="skills-window-header">
@@ -2360,6 +2601,17 @@ export default function Home() {
               suggested. Check or rate a suggested skill to include it in career
               matching.
             </DialogDescription>
+            {connections.length > 0 && (
+              <button
+                className="text-button"
+                onClick={() => {
+                  setSkillsOpen(false);
+                  setConnectionsOpen(true);
+                }}
+              >
+                Review background → skill connections <ArrowUpRight size={14} />
+              </button>
+            )}
           </div>
           <div className="skills-workspace">
             <section className="compiled-skills" aria-label="Compiled skills">
@@ -2367,19 +2619,19 @@ export default function Home() {
                 <h3>
                   Compiled skills <span>{compiled.length}</span>
                 </h3>
-                {!!pendingSkills.length && (
+                {!!jobSuggestions.length && (
                   <button
                     className="text-button"
                     onClick={() =>
                       setProfile((p) => ({
                         ...Object.fromEntries(
-                          pendingSkills.map((s) => [s.id, s.level]),
+                          jobSuggestions.map((s) => [s.id, s.level]),
                         ),
                         ...p,
                       }))
                     }
                   >
-                    Use all suggested levels
+                    Use suggested job levels
                     <Check size={14} />
                   </button>
                 )}
@@ -2387,7 +2639,9 @@ export default function Home() {
               {!!pendingSkills.length && (
                 <p className="skills-note">
                   Job suggestions use the highest reported level across your
-                  jobs, never a sum. Adjust them to reflect your own experience.
+                  jobs, never a sum. Background links do not supply a level:
+                  rate those skills yourself. Adjust all ratings to reflect your
+                  own experience.
                 </p>
               )}
               {!compiled.length && (
@@ -2410,6 +2664,9 @@ export default function Home() {
                       <Checkbox
                         id={`use-skill-${skill.id}`}
                         checked={skill.confirmed}
+                        disabled={
+                          !skill.confirmed && skill.suggestedLevel === null
+                        }
                         aria-label={`Use ${skill.name} for matching`}
                         onCheckedChange={(checked) =>
                           setProfile((p) => {
@@ -2428,11 +2685,21 @@ export default function Home() {
                           skill.confirmed ? 'rated-label' : 'suggested-label'
                         }
                       >
-                        {skill.confirmed ? 'Rated' : 'Suggested'}
+                        {skill.confirmed
+                          ? 'Rated'
+                          : skill.suggestedLevel === null
+                            ? 'Rate below'
+                            : 'Suggested'}
                       </span>
                       <strong>
-                        {skill.level.toFixed(1)}
-                        <small> / 7</small>
+                        {skill.confirmed || skill.suggestedLevel !== null ? (
+                          <>
+                            {skill.level.toFixed(1)}
+                            <small> / 7</small>
+                          </>
+                        ) : (
+                          'Unrated'
+                        )}
                       </strong>
                     </div>
                     <Slider
@@ -2452,7 +2719,12 @@ export default function Home() {
                       {skill.sources.length ? (
                         skill.sources.map((source) => (
                           <span key={source.id}>
-                            {source.title} <b>{source.level.toFixed(1)}</b>
+                            {source.title}{' '}
+                            <b>
+                              {source.level === null
+                                ? 'Background link'
+                                : source.level.toFixed(1)}
+                            </b>
                           </span>
                         ))
                       ) : (
@@ -2684,18 +2956,45 @@ export default function Home() {
                     Your background connections
                   </div>
                   <p className="microcopy">
-                    {overlaps.get(detail.id)?.length
-                      ? `Shared interest keywords: ${overlaps.get(detail.id)!.join(', ')}. This is interest affinity, not verified proficiency.`
-                      : 'No direct interest keyword overlap with this role. Your rated skills still determine alignment.'}
+                    Education and credential links identify related paths; skill
+                    links are suggestions to review. They do not establish
+                    eligibility.
                   </p>
-                  {background.source && (
+                  {connections
+                    .filter((c) => connectionStrength(detail, c) > 0)
+                    .map((c) => (
+                      <div className="connection-evidence" key={c.id}>
+                        <strong>{c.name}</strong>
+                        <p>
+                          {c.occupations.includes(detail.id)
+                            ? `${c.basis} → ${detail.title}`
+                            : `${c.skills
+                                .filter(
+                                  (id) =>
+                                    (detail.importance[Number(id)] ?? 0) >= 3,
+                                )
+                                .map((id) => data?.skills[Number(id)].name)
+                                .join(' · ')} → skills used in this role`}
+                        </p>
+                      </div>
+                    ))}
+                  {!connections.some(
+                    (c) => connectionStrength(detail, c) > 0,
+                  ) && (
                     <p className="microcopy">
-                      Education sources:{' '}
-                      {background.source.split('\n').join(' · ')}
-                      {background.major ? ` · ${background.major}` : ''}. Source
-                      prestige is not scored.
+                      No recorded background connection. This does not rule out
+                      the career.
                     </p>
                   )}
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      setSelected(null);
+                      setConnectionsOpen(true);
+                    }}
+                  >
+                    Review all background links <ArrowUpRight size={14} />
+                  </button>
                   {background.physical && (
                     <p className="microcopy">
                       Your physical capability / support notes:{' '}
@@ -3166,14 +3465,14 @@ export default function Home() {
           </p>
           <h3>Search and your broader profile.</h3>
           <p>
-            School, hobby, and certification menus use local copies of public
-            catalogs. Schools cover U.S. colleges and training providers in NCES
-            IPEDS 2024; international schools and other providers can be added
-            manually. Certifications come from CareerOneStop’s July 2026
-            download. Hobbies use Wikidata’s community list, whose structured
-            data is CC0. Lists are suggestions, not proof of attendance,
-            proficiency, or a currently valid credential. Custom entries work
-            the same way.
+            School, field of study, hobby, and certification menus use local
+            copies of public catalogs. Schools cover U.S. colleges and training
+            providers in NCES IPEDS 2024; international schools and other
+            providers can be added manually. Certifications come from
+            CareerOneStop’s July 2026 download. Hobbies use Wikidata’s community
+            list, whose structured data is CC0. Lists are suggestions, not proof
+            of attendance, proficiency, or a currently valid credential. Custom
+            entries work the same way.
           </p>
           {prefills &&
             PREFILL_FIELDS.map((key) => (
@@ -3197,13 +3496,20 @@ export default function Home() {
             education comparison when flagging potential underemployment.
           </p>
           <p>
-            Major, hobbies, talents, athletic experience, and training
-            contribute keyword affinity as a final ranking tie-breaker and
-            suggest skills for you to confirm. School/provider and physical
-            notes are context only. Optional ability self-ratings are compared
-            with O*NET level ratings; gaps trigger a review of demands,
-            supports, and accommodations. They are not medical assessments or
-            eligibility exclusions.
+            NCES connects 2020 fields of study to 2018 occupations, joined to
+            O*NET specializations by their exact SOC group. IPEDS 2024 positive
+            award records connect schools to fields and award levels; these are
+            historical records, not a current program catalog or proof of
+            attendance. CareerOneStop’s active direct certification links join
+            exact O*NET codes. These are related occupations, not universal
+            degree or license requirements. Hobby and talent connections use
+            editable suggestions in the O*NET skill vocabulary. Unrecognized
+            entries stay unmapped until you link skills yourself. Background
+            connections order otherwise equally fitting paths and populate the
+            combined skills window; only your confirmed ratings determine skill
+            fit. School names alone do not increase fit. Physical notes remain
+            personal context; optional ability self-ratings compare reported
+            demands, supports, and accommodations, not medical eligibility.
           </p>
           <h3>Pay percentiles, clearly defined.</h3>
           <p>

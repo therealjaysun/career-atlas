@@ -8,7 +8,6 @@ import {
   money,
   matches,
   searchOccupations,
-  backgroundOverlap,
   EMPTY_BACKGROUND,
   aiValue,
   aiLabel,
@@ -20,6 +19,12 @@ import {
   validPrefills,
   PREFILL_FIELDS,
 } from '../lib/career.ts';
+import {
+  connectBackground,
+  connectionStrength,
+  schoolPrograms,
+  schoolMajorEvidence,
+} from '../lib/background.ts';
 const d = JSON.parse(
   readFileSync(new URL('../public/onet.json', import.meta.url)),
 );
@@ -112,6 +117,141 @@ for (const key of ['source', 'training']) {
 }
 const dev = d.occupations.find((o) => o.id === '15-1252.00');
 const clerk = d.occupations.find((o) => o.id === '41-2011.00');
+// Background links preserve source identity and never manufacture proficiency or eligibility.
+const cs = prefills.major.items.find((item) => item.id === 'cip:11.0701');
+const mit = prefills.source.items.find((item) => item.id === 'ipeds:166683');
+const pmp = prefills.training.items.find((item) =>
+  item.name.startsWith('Project Management Professional —'),
+);
+assert(cs.occupations.includes(dev.id));
+assert(pmp.occupations.includes('13-1082.00'));
+assert(
+  !validPrefills({
+    ...prefills,
+    major: { ...prefills.major, items: [{ ...cs, occupations: ['bad-code'] }] },
+  }),
+);
+assert(
+  !validPrefills({
+    ...prefills,
+    source: {
+      ...prefills.source,
+      items: [{ ...mit, programs: [{ id: cs.id, awards: ['bachelor'] }] }],
+    },
+  }),
+);
+const allIds = new Set(d.occupations.map((o) => o.id));
+const allMajors = new Set(prefills.major.items.map((m) => m.id));
+for (const item of [...prefills.major.items, ...prefills.training.items]) {
+  assert(item.occupations.every((id) => allIds.has(id)));
+  assert.equal(new Set(item.occupations).size, item.occupations.length);
+}
+for (const item of prefills.source.items)
+  assert(item.programs.every((p) => allMajors.has(p.id)));
+const background = {
+  ...EMPTY_BACKGROUND,
+  source: mit.name,
+  major: cs.name,
+  training: pmp.name,
+  hobbies: 'woodworking\nphotography\nwriting',
+};
+const connected = connectBackground(background, prefills, d);
+assert.equal(connected.length, 6);
+assert(schoolPrograms(connected).has(cs.id));
+assert(
+  schoolMajorEvidence(mit, cs, 4).includes('at your selected degree level'),
+);
+assert(
+  schoolMajorEvidence(mit, { id: 'cip:99.9999' }, 4).includes(
+    'No award record',
+  ),
+);
+assert(schoolMajorEvidence(undefined, cs, 4).includes('No award record'));
+const csLink = connected.find((c) => c.field === 'major');
+assert.equal(connectionStrength(dev, csLink), 2);
+assert(csLink.skills.some((id) => d.skills[Number(id)].name === 'Programming'));
+assert(
+  schoolMajorEvidence(
+    { programs: [{ id: cs.id, awards: [7] }] },
+    cs,
+    4,
+  ).includes('but not'),
+);
+assert(schoolMajorEvidence(mit, cs, 0).includes('Choose your degree'));
+assert.equal(
+  connectBackground(
+    { ...EMPTY_BACKGROUND, hobbies: 'photography\nphotography' },
+    prefills,
+    d,
+  ).length,
+  1,
+);
+const schoolLink = connected.find((c) => c.field === 'source');
+assert.equal(schoolLink.skills.length, 0);
+assert.equal(schoolLink.occupations.length, 0);
+assert.equal(connectionStrength(dev, schoolLink), 0);
+const woodworking = connected.find((c) => c.name === 'woodworking');
+const equipment = String(
+  d.skills.findIndex((s) => s.name === 'Equipment Selection'),
+);
+assert(woodworking.skills.includes(equipment));
+const photos = connected.find((c) => c.name === 'photography');
+assert(photos.skills.includes(equipment));
+const fromBackground = compileSkills([], {}, d.skills, connected);
+assert(
+  fromBackground.every(
+    (s) => !s.confirmed && s.suggestedLevel === null && s.level === 0,
+  ),
+);
+assert.equal(
+  fromBackground
+    .find((s) => s.id === equipment)
+    .sources.filter((s) => ['woodworking', 'photography'].includes(s.title))
+    .length,
+  2,
+);
+assert.equal(alignment(dev, {}).score, null);
+assert(
+  compileSkills([], { [equipment]: 1.5 }, d.skills, connected).find(
+    (s) => s.id === equipment,
+  ).confirmed,
+);
+const unlisted = connectBackground(
+  {
+    ...EMPTY_BACKGROUND,
+    hobbies: 'My unlisted activity',
+    source: 'Programming University',
+    physical: 'programming',
+  },
+  null,
+  d,
+);
+assert.equal(unlisted.length, 2);
+assert(unlisted.every((c) => !c.skills.length && !c.occupations.length));
+const linkedCustom = connectBackground(
+  { ...EMPTY_BACKGROUND, hobbies: 'My unlisted activity' },
+  null,
+  d,
+  { [unlisted[1].id]: [equipment, equipment, '999', '-1'] },
+);
+assert.deepEqual(linkedCustom[0].skills, [equipment]);
+const removed = connectBackground(background, prefills, d, {
+  [woodworking.id]: [],
+});
+assert.deepEqual(removed.find((c) => c.id === woodworking.id).skills, []);
+assert.deepEqual(
+  connectBackground(EMPTY_BACKGROUND, prefills, d, {
+    [woodworking.id]: [equipment],
+  }),
+  [],
+);
+assert.deepEqual(
+  connectBackground(background, prefills, null).flatMap((c) => c.skills),
+  [],
+);
+console.log(
+  `Background mapping: ${prefills.source.items.filter((s) => s.programs.length).length} schools with awards, ${prefills.major.items.filter((m) => m.occupations.length).length} linked fields, ${prefills.training.items.filter((c) => c.occupations.length).length} linked certifications.`,
+);
 const skillMap = occupationLayout(d, 'skills');
 assert.equal(occupationLayout(d, 'activities'), d.occupations);
 assert.deepEqual(occupationLayout(null, 'skills'), []);
@@ -455,19 +595,6 @@ assert.equal(
     (o) => o.cluster === 5,
   ),
   true,
-);
-assert(
-  backgroundOverlap(dev, { ...EMPTY_BACKGROUND, major: 'software' }).includes(
-    'software',
-  ),
-);
-assert.deepEqual(
-  backgroundOverlap(dev, {
-    ...EMPTY_BACKGROUND,
-    source: 'Software University',
-    physical: 'software',
-  }),
-  [],
 );
 assert.equal(
   pathQuality(dev, full, { ...base, education: 6 }, 2).status,

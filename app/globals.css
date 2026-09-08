@@ -2526,3 +2526,47 @@ footer .mobile-info {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+.school-field-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 10px 0;
+}
+.connections-window {
+  width: min(820px, calc(100vw - 32px)) !important;
+}
+.connection-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 28px;
+}
+.connection-card {
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1px solid #594364;
+  border-radius: 14px;
+  background: #221b2b;
+}
+.connection-card summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+.connection-card summary span {
+  display: block;
+  color: #b6a8c1;
+  font-size: 12px;
+  margin-top: 6px;
+}
+.connection-evidence {
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 10px 0;
+  border-bottom: 1px solid #594364;
+}
+.connection-evidence p {
+  color: #b6a8c1;
+  margin: 5px 0;
+}

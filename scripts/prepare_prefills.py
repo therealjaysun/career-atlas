@@ -6,6 +6,8 @@ import json
 import re
 import sys
 import zipfile
+import xml.etree.ElementTree as ET
+from collections import defaultdict
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
@@ -17,6 +19,9 @@ FILES = {
     'schools2024.zip': 'https://nces.ed.gov/ipeds/datacenter/data/HD2024.zip',
     'certifications.zip': 'https://cloudfront.careeronestop.org/TridionMultimedia/tcm24-64713_Zip_COS_Cert.zip',
     'hobbies.html': 'https://www.wikidata.org/wiki/Wikidata:List_of_activities_done_as_hobby',
+    'cip-soc.xlsx': 'https://nces.ed.gov/ipeds/cipcode/Files/CIP2020_SOC2018_Crosswalk.xlsx',
+    'completions2024.zip': 'https://nces.ed.gov/ipeds/datacenter/data/C2024_A.zip',
+    'cip2020.csv': 'https://nces.ed.gov/ipeds/cipcode/Files/CIPCode2020.csv',
 }
 for name, url in FILES.items():
     target = CACHE / name
@@ -94,18 +99,60 @@ def unique(items):
     return sorted(result.values(), key=lambda item: item['name'].casefold())
 
 
+occupations = json.loads(Path('public/onet.json').read_text())['occupations']
+occupation_ids = {o['id'] for o in occupations}
+soc_ids = defaultdict(list)
+for occupation in occupations:
+    soc_ids[occupation['id'].split('.')[0]].append(occupation['id'])
+
+# Read the official workbook as XML: only literal cell values, no spreadsheet execution.
+ns = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+with zipfile.ZipFile(CACHE / 'cip-soc.xlsx') as archive:
+    strings = [''.join(node.itertext()) for node in ET.fromstring(archive.read('xl/sharedStrings.xml'))]
+    sheets = ET.fromstring(archive.read('xl/workbook.xml')).find('m:sheets', ns)
+    assert sheets[1].get('name') == 'CIP-SOC'
+    rows = ET.fromstring(archive.read('xl/worksheets/sheet2.xml')).find('m:sheetData', ns)
+    crosswalk = defaultdict(set)
+    for row in list(rows)[1:]:
+        cells = {re.sub(r'\d', '', cell.get('r')): strings[int(cell.findtext('m:v', namespaces=ns))] if cell.get('t') == 's' else cell.findtext('m:v', '', ns) for cell in row}
+        if re.fullmatch(r'\d{2}\.\d{4}', cells.get('A', '')):
+            crosswalk[cells['A']].update(soc_ids.get(cells.get('C'), []))
+
+major_items = []
+with (CACHE / 'cip2020.csv').open(encoding='utf-8-sig') as file:
+    for row in csv.DictReader(file):
+        code = row['CIPCode'].strip('="')
+        if re.fullmatch(r'\d{2}\.\d{4}', code):
+            major_items.append({'id': 'cip:' + code, 'name': row['CIPTitle'].rstrip('.') + ' · ' + code,
+                                'aliases': [row['CIPTitle'].rstrip('.')], 'occupations': sorted(crosswalk[code])})
+major_items = unique(major_items)
+major_ids = {item['id'] for item in major_items}
+programs = defaultdict(lambda: defaultdict(set))
+with zipfile.ZipFile(CACHE / 'completions2024.zip') as archive:
+    with archive.open('C2024_a.csv') as file:
+        for row in csv.DictReader(io.TextIOWrapper(file, encoding='utf-8-sig')):
+            cip = 'cip:' + row['CIPCODE']
+            # Positive awards document a reported field, not a current catalog or the user's attendance.
+            if cip in major_ids and int(row['CTOTALT']) > 0:
+                programs[row['UNITID']][cip].add(int(row['AWLEVEL']))
+
 with zipfile.ZipFile(CACHE / 'schools2024.zip') as archive:
     schools = list(csv.DictReader(io.StringIO(archive.read('HD2024.csv').decode('utf-8-sig'))))
 school_items = unique([{
     'id': 'ipeds:' + row['UNITID'],
     'name': f"{row['INSTNM']} — {row['CITY']}, {row['STABBR']}",
     'aliases': [row['INSTNM'], *filter(None, re.split(r'[|;,]', row['IALIAS'].strip()))],
+    'programs': [{'id': cip, 'awards': sorted(awards)} for cip, awards in sorted(programs[row['UNITID']].items())],
 } for row in schools])
 with zipfile.ZipFile(CACHE / 'certifications.zip') as archive:
     readme = archive.read('readme-certifications.txt').decode('utf-8-sig')
     assert 'July 2026' in readme, 'Review the certification snapshot date before updating'
     organizations = {r['ORG_ID']: r for r in sql_rows(archive.read('1-CERT_ORGS.sql').decode('utf-8-sig'), 'CERT_ORGS')}
     certifications = list(sql_rows(archive.read('2-CERTIFICATIONS.sql').decode('utf-8-sig'), 'CERTIFICATIONS'))
+    cert_roles = defaultdict(set)
+    for row in sql_rows(archive.read('6-CERT_ONET_ASSIGN.sql').decode('utf-8-sig'), 'CERT_ONET_ASSIGN'):
+        if row['ACTIVE_YN'] == 'Y' and row['RELATION'] == 'D' and row['ONETCODE'] in occupation_ids:
+            cert_roles[row['CERT_ID']].add(row['ONETCODE'])
 cert_items = []
 for row in certifications:
     org = organizations.get(row['ORG_ID'])
@@ -116,6 +163,7 @@ for row in certifications:
         'id': 'cos:' + row['CERT_ID'],
         'name': row['CERT_NAME'] + ' — ' + org['ORG_NAME'],
         'aliases': [value for value in aliases if value and value != 'NULL'],
+        'occupations': sorted(cert_roles[row['CERT_ID']]),
     })
 cert_items = unique(cert_items)
 hobbies = Hobbies()
@@ -134,9 +182,10 @@ result = {
     'source': {'label': 'NCES IPEDS', 'snapshot': '2024 · U.S. colleges and training providers', 'url': 'https://nces.ed.gov/ipeds/use-the-data', 'items': school_items},
     'training': {'label': 'CareerOneStop', 'snapshot': 'July 2026 · national certifications', 'url': 'https://www.careeronestop.org/Developers/Data/certifications.aspx', 'items': cert_items},
     'hobbies': {'label': 'Wikidata', 'snapshot': str(date.today()) + ' · community hobby list', 'url': FILES['hobbies.html'], 'items': hobby_items},
+    'major': {'label': 'NCES CIP → SOC', 'snapshot': '2020 fields → 2018 occupations · school awards from IPEDS 2024', 'url': 'https://nces.ed.gov/ipeds/cipcode/resources.aspx?y=56', 'items': major_items},
     'inputs': {name: {'url': url, 'sha256': hashlib.sha256((CACHE / name).read_bytes()).hexdigest()} for name, url in FILES.items()},
 }
 Path('public/background-options.json').write_text(json.dumps(result, ensure_ascii=False, separators=(',', ':')) + '\n')
-for key in ['source', 'hobbies', 'training']:
+for key in ['source', 'hobbies', 'training', 'major']:
     print(key, len(result[key]['items']))
 print('Hobbies:', ', '.join(item['name'] for item in hobby_items))

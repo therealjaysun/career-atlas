@@ -189,15 +189,17 @@ export function occupationLayout(
   }));
 }
 export type Profile = Record<string, number>;
+export type SkillConnection = { id: string; name: string; skills: string[] };
 export function compileSkills(
   jobs: Occupation[],
   profile: Profile,
   skills: { name: string }[],
+  connections: SkillConnection[] = [],
 ) {
   const uniqueJobs = [...new Map(jobs.map((job) => [job.id, job])).values()];
   return skills
     .map((skill, index) => {
-      const sources = uniqueJobs.flatMap((job) => {
+      const jobSources = uniqueJobs.flatMap((job) => {
         const level = job.skills[index];
         return level != null &&
           Number.isFinite(level) &&
@@ -208,9 +210,19 @@ export function compileSkills(
       });
       const rating = profile[index];
       const confirmed = Number.isFinite(rating) && rating >= 0 && rating <= 7;
-      const suggestedLevel = sources.length
-        ? Math.max(...sources.map((s) => s.level))
+      const suggestedLevel = jobSources.length
+        ? Math.max(...jobSources.map((s) => s.level))
         : null;
+      const sources = [
+        ...jobSources,
+        ...connections
+          .filter((c) => c.skills.includes(String(index)))
+          .map((c) => ({
+            id: c.id,
+            title: c.name,
+            level: null,
+          })),
+      ];
       return {
         id: String(index),
         name: skill.name,
@@ -281,8 +293,15 @@ export type SearchItem = {
   name: string;
   aliases?: string[];
   custom?: boolean;
+  occupations?: string[];
+  programs?: { id: string; awards: number[] }[];
 };
-export const PREFILL_FIELDS = ['source', 'hobbies', 'training'] as const;
+export const PREFILL_FIELDS = [
+  'source',
+  'hobbies',
+  'training',
+  'major',
+] as const;
 export type PrefillField = (typeof PREFILL_FIELDS)[number];
 export type Prefills = Record<
   PrefillField,
@@ -314,7 +333,27 @@ export function validPrefills(value: unknown): value is Prefills {
           item.name.length <= 500 &&
           (item.aliases === undefined ||
             (Array.isArray(item.aliases) &&
-              item.aliases.every((a) => typeof a === 'string'))),
+              item.aliases.every((a) => typeof a === 'string'))) &&
+          (item.occupations === undefined ||
+            (Array.isArray(item.occupations) &&
+              item.occupations.every(
+                (id) =>
+                  typeof id === 'string' && /^\d{2}-\d{4}\.\d{2}$/.test(id),
+              ))) &&
+          (item.programs === undefined ||
+            (Array.isArray(item.programs) &&
+              item.programs.every(
+                (p) =>
+                  p &&
+                  typeof p.id === 'string' &&
+                  /^cip:\d{2}\.\d{4}$/.test(p.id) &&
+                  Array.isArray(p.awards) &&
+                  p.awards.every(
+                    (a) =>
+                      Number.isInteger(a) &&
+                      [2, 3, 4, 5, 6, 7, 8, 17, 18, 19, 20, 21].includes(a),
+                  ),
+              ))),
       ) &&
       new Set(source.items.map((item) => item.id)).size === source.items.length
     );
@@ -415,42 +454,6 @@ export function searchOccupations(
     .filter((x) => x.score >= 0.025)
     .sort((a, b) => b.score - a.score || a.o.title.localeCompare(b.o.title))
     .map((x) => x.o);
-}
-export function backgroundOverlap(o: Occupation, background: Background) {
-  // ponytail: keyword affinity surfaces interests, not credential equivalence or proficiency. Replace with a validated taxonomy if this becomes an assessment.
-  const words = new Set(
-    normalize([o.title, ...(o.aliases ?? []), ...o.tasks].join(' ')).split(' '),
-  );
-  const stop = new Set([
-    'with',
-    'from',
-    'that',
-    'this',
-    'have',
-    'level',
-    'degree',
-    'training',
-    'work',
-    'school',
-    'college',
-    'university',
-    'good',
-    'very',
-    'ability',
-  ]);
-  return [
-    ...new Set(
-      normalize(
-        [
-          background.major,
-          background.hobbies,
-          background.talents,
-          background.training,
-          background.athletics,
-        ].join(' '),
-      ).split(' '),
-    ),
-  ].filter((t) => t.length >= 4 && !stop.has(t) && words.has(t));
 }
 export type AIMetric = 'observed' | 'applicability';
 export const AI_SOURCES = {

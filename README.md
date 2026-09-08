@@ -69,7 +69,7 @@ One optional WebMCP tool (`explore_occupation`) is registered only in supporting
 
 ## Background dropdown sources
 
-Schools, hobbies, and certifications use the same accessible multi-select combobox as previous jobs. Users can search titles and acronyms, choose several suggestions, remove individual chips, or choose **Add “…”** for a custom entry. A missing catalog does not block custom entries. Confirmed selections remain local to the current tab. Names are stored with newline separators so commas in school or issuer names are preserved. Selections provide context/interest keywords only; they do not grant skills or verify a credential.
+Schools, fields of study, hobbies, and certifications use the same accessible multi-select combobox as previous jobs. Users can search titles and acronyms, choose several suggestions, remove individual chips, or choose **Add “…”** for a custom entry. A missing catalog does not block custom entries. Confirmed selections remain local to the current tab. Names are stored with newline separators so commas in school or issuer names are preserved. Selections connect to programs, occupations, and skill suggestions; they do not grant skill ratings or verify credentials.
 
 `public/background-options.json` contains:
 
@@ -79,6 +79,19 @@ Schools, hobbies, and certifications use the same accessible multi-select combob
 
 Run `python3 scripts/prepare_prefills.py /tmp/onet-prefill` to reproduce from cached snapshots or fetch missing public source files. The certification SQL export is parsed as text, never executed. The generated file includes source URLs and SHA-256 hashes. To refresh intentionally, replace the specific cached input, check its snapshot date and coverage, and rerun. A date assertion prevents silently labeling a newer certification download as July 2026. Source names, dates, scope, and counts are shown below the fields and in Data & methodology.
 
+## Background connections
+
+**View background connections** shows each entry → its source → suggested skills → related occupations. Users can edit or remove skill links, including for every custom entry, and restore automatic suggestions. All suggestions join the combined skills window with their provenance; background-derived skills start **Unrated**, with no assumed proficiency. Only rating/checking a skill includes it in alignment. Bulk acceptance remains limited to levels suggested by previous jobs. Removing an entry removes its unconfirmed suggestions; confirmed ratings remain user-owned.
+
+- **Schools → fields and award levels:** [IPEDS C2024_A](https://nces.ed.gov/ipeds/datacenter/data/C2024_A.zip) supplies positive award records for 5,820 of the 6,064 school labels. Exact UNITID and six-digit CIP joins retain original award levels. Select a field you studied from a school's reported fields, or filter the major menu by all selected schools. The panel compares a selected major and education level to the school's 2024 record. These are historical awards, not current program availability, attendance verification, admissions requirements, or a school's prestige score. Missing records remain unknown.
+- **Majors → occupations:** 2,325 six-digit fields from [NCES CIP 2020](https://nces.ed.gov/ipeds/cipcode/Files/CIPCode2020.csv); 1,906 have occupations in Atlas through the official [2020 CIP–2018 SOC crosswalk](https://nces.ed.gov/ipeds/cipcode/Files/CIP2020_SOC2018_Crosswalk.xlsx). Detailed SOC groups link to their O*NET specializations. A listed field prepares people for related work; it is not a mandatory degree for every employer or a placement probability.
+- **Certifications → occupations:** 6,137 certification labels have active, direct (`RELATION=D`, `ACTIVE_YN=Y`) links from CareerOneStop's `CERT_ONET_ASSIGN` table to exact O*NET codes in Atlas. Indirect, inactive, and missing-code links are excluded. This does not establish licensure, credential validity, or universal employer requirements.
+- **Interests → skills:** editable rules in `lib/background.ts` suggest O*NET skill vocabulary for 82 of the 216 catalog hobbies, plus recognized custom interests, talents, training, and athletic activities. This is an app-authored suggestion layer, not a validated research crosswalk. Remaining entries explicitly report no automatic mapping and support manual skill links. Physical-support notes are not analyzed.
+
+Major/certification skill suggestions use four highly important skills and up to four distinctive skills across their linked roles (mean importance ≥2.5/5, distinctive relative to the measured occupation baseline). This is a suggestion from occupational demands, not a curriculum claim. Official occupation connections and similarity to linked skills replace generic word overlap as a final tie-breaker after path quality and confirmed skill fit. They never override pay/fit guardrails or exclude a role for an absent degree/credential connection. School names alone do not change rank.
+
+`node tests/check.mjs` checks catalog validation, all occupation/program references, a real MIT → Computer Science → Software Developer chain, PMP occupation links, hobby skill provenance, manual/unmapped entries, removal, missing data, and separation from proficiency ratings.
+
 ## Broader profiles and fuzzy search
 
 Previous jobs support multiple title selections. The **My skills** window compiles every reported positive skill level from those jobs alongside the user's own additions. Each skill appears once, showing all contributing jobs; its suggested level is the highest reported level, never a sum. Suggestions stay outside career scoring until checked, rated, or explicitly accepted together. Existing ratings, including zero, always win and remain when a job is removed. Unrated suggestions from removed jobs disappear when no remaining job supplies them.
@@ -87,7 +100,7 @@ The window also supports selecting and adding several skills together. New manua
 
 Title search ranks canonical and alternate O*NET titles with installed cmdk's subsequence/transposition matching, plus a short trigram fallback for substitutions. Exact task text remains searchable. Database results preserve relevance order; occupation pickers show the nearest 50 matches. Deferred inputs keep typing responsive. This is local search, not an embedding service.
 
-Education has distinct master’s, doctorate, and professional entries, all mapping to graduate preparation proxy 5. Major, training, hobbies, talents, and athletic experience provide **keyword affinity** as a final tie-breaker and suggest skills to confirm. Entering a credential never automatically grants a skill or a license. School/provider and physical notes remain personal context, without prestige or medical scoring. Optional ability ratings use the O*NET 0–7 level scale; role demands more than 0.5 above a self-rating add a trade-off caution. Unknown ability data remains unknown, and accommodations/actual job conditions require review.
+Education has distinct master’s, doctorate, and professional entries, all mapping to graduate preparation proxy 5. Major, training, hobbies, talents, and athletic experience use the connections described above. Entering a credential never automatically grants a skill rating or a license. Schools contribute program records; physical notes remain personal context, without prestige or medical scoring. Optional ability ratings use the O*NET 0–7 level scale; role demands more than 0.5 above a self-rating add a trade-off caution. Unknown ability data remains unknown, and accommodations/actual job conditions require review.
 
 The possibility tree shows up to three ranked roles in each of the first four ranked clusters. It groups candidate outcomes, not sequential career transitions. Skill scenarios update it alongside the map.
 
@@ -95,11 +108,11 @@ The possibility tree shows up to three ranked roles in each of the first four ra
 
 Research checked **September 8, 2026**. Sources and dates are visible in the application:
 
-| Measure | Source | Mapped roles | Interpretation |
-| --- | --- | --- | --- |
-| Observed exposure | Massenkoff & McCrory, [Anthropic, March 5, 2026](https://www.anthropic.com/research/labor-market-impacts) | 876 | Time-weighted task index combining theoretical LLM capability with measured professional Claude use, with more weight on automation. |
-| AI applicability | Tomlinson, Jaffe, Wang, Counts & Suri, [Working with AI v6, December 22, 2025](https://arxiv.org/abs/2507.07935v6) | 893 | Bing Copilot activity coverage, successful completion, and scope. Includes assistance, not just automation. |
-| May usage patterns | [Anthropic June 26, 2026 Economic Index](https://www.anthropic.com/research/economic-index-june-2026-report) | 718 | Global Claude chat/Cowork automation and augmentation shares within measured interactions associated with each role's tasks. |
+| Measure            | Source                                                                                                             | Mapped roles | Interpretation                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Observed exposure  | Massenkoff & McCrory, [Anthropic, March 5, 2026](https://www.anthropic.com/research/labor-market-impacts)          | 876          | Time-weighted task index combining theoretical LLM capability with measured professional Claude use, with more weight on automation. |
+| AI applicability   | Tomlinson, Jaffe, Wang, Counts & Suri, [Working with AI v6, December 22, 2025](https://arxiv.org/abs/2507.07935v6) | 893          | Bing Copilot activity coverage, successful completion, and scope. Includes assistance, not just automation.                          |
+| May usage patterns | [Anthropic June 26, 2026 Economic Index](https://www.anthropic.com/research/economic-index-june-2026-report)       | 718          | Global Claude chat/Cowork automation and augmentation shares within measured interactions associated with each role's tasks.         |
 
 June 26 was the latest Economic Index release listed in the [official repository](https://huggingface.co/datasets/Anthropic/EconomicIndex/blob/main/README.md) when checked. Its April/May usage data is **not** an update to the March exposure index. Role details show May usage separately, preserving unpublished metrics. The March paper found no systematic increase in unemployment with exposure, with suggestive evidence of slower younger-worker hiring. Neither index estimates an individual's job-loss probability.
 
