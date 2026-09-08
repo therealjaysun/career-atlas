@@ -13,12 +13,79 @@ import {
   aiValue,
   aiLabel,
   compileSkills,
+  occupationLayout,
 } from '../lib/career.ts';
 const d = JSON.parse(
   readFileSync(new URL('../public/onet.json', import.meta.url)),
 );
 const dev = d.occupations.find((o) => o.id === '15-1252.00');
 const clerk = d.occupations.find((o) => o.id === '41-2011.00');
+const skillMap = occupationLayout(d, 'skills');
+assert.equal(occupationLayout(d, 'activities'), d.occupations);
+assert.deepEqual(occupationLayout(null, 'skills'), []);
+assert.equal(skillMap.length, d.occupations.length);
+assert.equal(new Set(skillMap.map((o) => o.id)).size, d.occupations.length);
+assert(
+  skillMap.filter(
+    (o, i) => o.x !== d.occupations[i].x || o.y !== d.occupations[i].y,
+  ).length > 900,
+);
+const skillDev = skillMap.find((o) => o.id === dev.id);
+assert.notDeepEqual(skillDev.neighbors, dev.neighbors);
+assert.equal(skillDev.skills, dev.skills);
+assert.equal(skillDev.wage, dev.wage);
+assert.equal(skillDev.ai, dev.ai);
+assert.equal(skillDev.trend, dev.trend);
+assert(
+  d.layouts.skills.clusters[skillDev.cluster].features.includes('Programming'),
+);
+assert(
+  searchOccupations(skillMap, 'software', skillDev.cluster, 0).every(
+    (o) => o.cluster === skillDev.cluster,
+  ),
+);
+for (const [basis, map] of [
+  ['skills', skillMap],
+  ['activities', d.occupations],
+]) {
+  const clusters = basis === 'skills' ? d.layouts.skills.clusters : d.clusters;
+  assert.equal(clusters.length, 12);
+  assert.equal(new Set(clusters.map((c) => c.name)).size, 12);
+  for (const c of clusters) {
+    assert.equal(map.filter((o) => o.cluster === c.id).length, c.count);
+    assert(
+      c.features.length === 5 &&
+        c.representatives.every((id) =>
+          map.some((o) => o.id === id && o.cluster === c.id),
+        ),
+    );
+  }
+  for (const o of map) {
+    assert(o.x >= 0 && o.x <= 1 && o.y >= 0 && o.y <= 1);
+    if (basis === 'skills' && o.imputedMeasurements === 70)
+      assert.equal(o.neighbors.length, 0);
+    else assert.equal(o.neighbors.length, 8);
+    assert.equal(
+      new Set(o.neighbors.map(([id]) => id)).size,
+      o.neighbors.length,
+    );
+    assert(
+      o.neighbors.every(
+        ([id, score], i) =>
+          id !== o.id &&
+          map.some((v) => v.id === id) &&
+          score >= -1 &&
+          score <= 1 &&
+          (!i || score <= o.neighbors[i - 1][1]),
+      ),
+    );
+  }
+}
+assert.equal(skillMap.filter((o) => o.imputedMeasurements === 70).length, 13);
+assert.equal(
+  skillMap.reduce((n, o) => n + o.imputedMeasurements, 0),
+  d.layouts.skills.imputedValues,
+);
 // Multiple jobs produce one row per skill, with every source and no inflated levels.
 const jobs = [
   { ...dev, skills: [2, null, 4] },

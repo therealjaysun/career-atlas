@@ -29,12 +29,19 @@ python scripts/prepare_data.py /path/to/csv-directory
 python scripts/prepare_wages.py
 python scripts/prepare_trends.py
 python scripts/prepare_enrichment.py /tmp/onet-enrichment
+python scripts/prepare_clusters.py
 node tests/check.mjs
 ```
 
 Run those commands sequentially: each later script attaches data to the first output. Wage and outlook pages are cached under `/tmp/onet-wages` and `/tmp/onet-trends`. Delete those specific caches before intentionally refreshing them. They retrieve public official pages with four concurrent requests and a per-request delay. Enrichment downloads missing O*NET title/ability files and pinned research inputs into its specified cache. The June usage input is about 219 MB; only the May global occupation subset is retained. No keys or credentials are required.
 
 Built with numpy 2.5.3, scipy 1.18.1, scikit-learn 1.9.0, umap-learn 0.5.12. DWA presence is binary per occupation, IDF weighted and L2 normalized. K-means uses 12 clusters, 20 initializations, random seed 42. UMAP uses cosine distance, 22 neighbors, min_dist 0.22, seed 42. Neighbor scores use original vector cosine similarity. There are 93 unmodeled occupations lacking DWA mappings. Labels summarize groups, not official categories; UMAP distances and cluster boundaries are approximate.
+
+Database exploration defaults to **Skills**, with an **Activities** switch. The skills layout uses 35 required levels plus 35 importance ratings, column-median imputation for missing data, feature standardization, K-means (12 clusters, 20 starts, seed 42), and UMAP (Euclidean, 22 neighbors, min_dist 0.22, seed 42). Neighbor connections use cosine similarity of those standardized profiles. Switching layouts replaces coordinates, memberships, labels, filters, and neighbor scores together, while preserving wages, AI measures, and user ratings. Career navigation retains the activities layout. Neither model uses industries, titles, or SOC categories as features.
+
+`prepare_clusters.py` adds this layout to the enriched dataset without replacing its occupational records. Skills labels use dimensions with high relative group demand; an overall lower-demand group instead shows its highest reported mean levels and is labeled foundational. Selected groups show their feature evidence. Activity labels describe representative actions rather than industries. These are descriptive clusters, not official categories.
+
+There are 1,067 missing skill measurements across 83 roles. Imputation only affects the skills map, never user fit. Thirteen roles have no reported skill measurements: their positions are imputed, their node centers are hollow, and they have no skill-neighbor links. Other roles' neighbor lists exclude these unmeasured profiles. Role details show source coverage. Cosine similarity is an index, not a percentage of shared skills.
 
 Wages: BLS OEWS May 2025, retrieved via each occupation's official O*NET OnLine national wages page. All 923 pages loaded; annual estimates available for 919 occupations. The others remain missing (hourly mode may have estimates). P10/P25/P50/P75/P90 are the five published percentiles, never interpolated. Censoring and missing values are preserved; broader wage groups are identified. These wages exclude benefits/equity and are not a total compensation forecast.
 

@@ -81,7 +81,8 @@ import {
   QUALITY,
   DEFAULT_CRITERIA,
   type Criteria,
-  CLUSTER_NAMES,
+  occupationLayout,
+  type ClusterBasis,
   COLORS,
   searchOccupations,
   titleScore,
@@ -375,6 +376,8 @@ export default function Home() {
   const [query, setQuery] = useState(''),
     [cluster, setCluster] = useState<number | null>(null),
     [color, setColor] = useState('cluster');
+  const [clusterBy, setClusterBy] = useState<ClusterBasis>('skills');
+  const basis: ClusterBasis = mode === 'explore' ? clusterBy : 'activities';
   const searchQuery = useDeferredValue(query);
   const [percentile, setPercentile] = useState(2),
     [unit, setUnit] = useState<'annual' | 'hourly'>('annual');
@@ -396,7 +399,11 @@ export default function Home() {
       })
       .then((value) => {
         const d = value as Dataset;
-        if (!Array.isArray(d.occupations) || !Array.isArray(d.skills))
+        if (
+          !Array.isArray(d.occupations) ||
+          !Array.isArray(d.skills) ||
+          !d.layouts?.skills
+        )
           throw Error('The dataset format is invalid.');
         setData(d);
       })
@@ -405,7 +412,23 @@ export default function Home() {
       });
     return () => c.abort();
   }, []);
-  const occupations = useMemo(() => data?.occupations ?? [], [data]);
+  const occupations = useMemo(
+    () => occupationLayout(data, basis),
+    [data, basis],
+  );
+  const activeClusters = useMemo(
+    () =>
+      data
+        ? basis === 'skills'
+          ? data.layouts.skills.clusters
+          : data.clusters
+        : [],
+    [data, basis],
+  );
+  const clusterNames = Object.fromEntries(
+    activeClusters.map((c) => [c.id, c.name]),
+  );
+  const selectedCluster = activeClusters.find((c) => c.id === cluster);
   const byId = useMemo(
     () => new Map(occupations.map((o) => [o.id, o])),
     [occupations],
@@ -684,6 +707,9 @@ export default function Home() {
             setMode(String(v));
             setQuery('');
             setCluster(null);
+            setHovered(null);
+            setFocusIndex(0);
+            setView({ x: 0, y: 0, k: 1 });
             if (v === 'explore' && color === 'quality') setColor('cluster');
           }}
         >
@@ -1261,6 +1287,35 @@ export default function Home() {
             <div className="bubble">
               <div className="step-label">FIND YOUR CURIOSITY</div>
               <h2>Every role has a story.</h2>
+              <div className="cluster-basis">
+                <span id="cluster-basis-label">Group occupations by</span>
+                <Tabs
+                  value={clusterBy}
+                  onValueChange={(v) => {
+                    setClusterBy(v as ClusterBasis);
+                    setCluster(null);
+                    setHovered(null);
+                    setFocusIndex(0);
+                    setView({ x: 0, y: 0, k: 1 });
+                  }}
+                >
+                  <TabsList aria-labelledby="cluster-basis-label">
+                    <TabsTrigger value="skills">
+                      <Sparkles size={14} />
+                      Skills
+                    </TabsTrigger>
+                    <TabsTrigger value="activities">
+                      <Layers size={14} />
+                      Activities
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                <p>
+                  {basis === 'skills'
+                    ? 'Similar required skill levels and importance, across occupations.'
+                    : 'Similar tasks and responsibilities, using detailed work activities.'}
+                </p>
+              </div>
               <label className="input-shell">
                 <Search size={17} />
                 <input
@@ -1281,25 +1336,60 @@ export default function Home() {
                 )}
               </label>
               <div className="filter-heading">
-                <span>Responsibility clusters</span>
+                <span>
+                  {basis === 'skills'
+                    ? 'Skill-profile clusters'
+                    : 'Work-activity clusters'}
+                </span>
                 {cluster !== null && (
                   <button onClick={() => setCluster(null)}>Clear</button>
                 )}
               </div>
               <div className="cluster-filters">
-                {data?.clusters.map((c) => (
+                {activeClusters.map((c) => (
                   <button
                     key={c.id}
                     className={cluster === c.id ? 'active' : ''}
                     onClick={() => setCluster(cluster === c.id ? null : c.id)}
                     aria-pressed={cluster === c.id}
+                    title={c.features.join(' · ')}
                   >
                     <i style={{ background: COLORS[c.id] }} />
-                    {CLUSTER_NAMES[c.id]}
+                    <span className="cluster-name">{clusterNames[c.id]}</span>
                     <span>{c.count}</span>
                   </button>
                 ))}
               </div>
+              {selectedCluster && (
+                <div className="cluster-evidence">
+                  <h3>
+                    {basis === 'skills'
+                      ? 'Group skill dimensions'
+                      : 'Common work activities'}
+                  </h3>
+                  <ul>
+                    {selectedCluster.features.map((feature, i) => (
+                      <li key={feature}>
+                        {feature}
+                        {basis === 'skills' && selectedCluster.meanLevels && (
+                          <span>
+                            {' '}
+                            {selectedCluster.meanLevels[i].toFixed(1)}/7 mean
+                            level
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  <p>
+                    {basis === 'skills'
+                      ? selectedCluster.featureBasis === 'reported-level'
+                        ? 'This group has lower skill demands overall. Shown are its highest reported mean levels.'
+                        : 'Dimensions with the highest relative demand in this group. Means use reported levels.'
+                      : 'Representative activities from the group’s original task profiles.'}
+                  </p>
+                </div>
+              )}
             </div>
             <div className="bubble matches-bubble">
               <div className="section-label">
@@ -1445,7 +1535,9 @@ export default function Home() {
           <div className="map-caption">
             {isTree
               ? `${mapOccupations.length} example paths across ${branches.length} clusters · grouping, not a hiring forecast`
-              : 'Nearby occupations share responsibilities'}
+              : basis === 'skills'
+                ? 'Grouped by skill profiles · nearby roles need similar skills'
+                : 'Grouped by activities · nearby roles share responsibilities'}
             {aiOverlay && (
               <button
                 onClick={() => {
@@ -1556,7 +1648,7 @@ export default function Home() {
                   )}
               </g>
               {!isTree &&
-                data.clusters.map((c) => {
+                activeClusters.map((c) => {
                   const p = point(c);
                   return (
                     <g
@@ -1571,7 +1663,15 @@ export default function Home() {
                         fill={COLORS[c.id]}
                         style={{ fontSize: `${12 / Math.sqrt(view.k)}px` }}
                       >
-                        {CLUSTER_NAMES[c.id]}
+                        {c.name.split(' · ').map((part, i) => (
+                          <tspan
+                            key={part}
+                            x={0}
+                            dy={i ? 15 / Math.sqrt(view.k) : 0}
+                          >
+                            {part}
+                          </tspan>
+                        ))}
                       </text>
                     </g>
                   );
@@ -1622,7 +1722,7 @@ export default function Home() {
                           fill={COLORS[b.id]}
                           fontSize={15}
                         >
-                          {CLUSTER_NAMES[b.id]}
+                          {clusterNames[b.id]}
                         </text>
                         {b.roles.map((o) => {
                           const p = treePositions.get(o.id)!;
@@ -1661,6 +1761,8 @@ export default function Home() {
               {mapOccupations.map((o, i) => {
                 const p = isTree ? treePositions.get(o.id)! : point(o),
                   score = scores.get(o.id)?.score ?? 0;
+                const missingSkills =
+                  basis === 'skills' && o.imputedMeasurements === 70;
                 const bright =
                   mode === 'career' && hasProfile && color !== 'quality';
                 const active = selected === o.id || hovered === o.id;
@@ -1722,6 +1824,9 @@ export default function Home() {
                   >
                     <title>
                       {o.title}
+                      {missingSkills
+                        ? ' · No reported skill measurements; position imputed'
+                        : ''}
                       {aiOverlay ? ` · ${aiLabel(o, aiMetric)}` : ''}
                     </title>
                     {aiOverlay && (
@@ -1754,7 +1859,11 @@ export default function Home() {
                       cx={p.x}
                       cy={p.y}
                       r={(active ? 5.5 : 3.1) / Math.sqrt(view.k)}
-                      fill={fill}
+                      fill={missingSkills ? 'none' : fill}
+                      stroke={missingSkills ? '#aaa4b9' : undefined}
+                      strokeWidth={
+                        missingSkills ? 1.5 / Math.sqrt(view.k) : undefined
+                      }
                       opacity={isTree ? 1 : opacity}
                     />
                     {isTree && (
@@ -1816,9 +1925,15 @@ export default function Home() {
       {hover && (
         <div className="hover-card bubble" role="status">
           <div className="step-label" style={{ color: COLORS[hover.cluster] }}>
-            {CLUSTER_NAMES[hover.cluster]}
+            {clusterNames[hover.cluster]}
           </div>
           <strong>{hover.title}</strong>
+          {basis === 'skills' && !!hover.imputedMeasurements && (
+            <small>
+              {70 - hover.imputedMeasurements}/70 skill measurements reported ·
+              missing values imputed for placement
+            </small>
+          )}
           {aiOverlay && (
             <span className="ai-text">{aiLabel(hover, aiMetric)}</span>
           )}
@@ -1967,8 +2082,13 @@ export default function Home() {
             <span className="legend-dot" />
             One dot, one occupation
             <span className="legend-line" />
-            Shared responsibilities
+            {basis === 'skills'
+              ? 'Similar skill profiles'
+              : 'Shared responsibilities'}
           </>
+        )}
+        {mode === 'explore' && basis === 'skills' && (
+          <span>Hollow center = no reported skill data</span>
         )}
         {aiOverlay && (
           <span className="ai-legend">
@@ -2209,7 +2329,7 @@ export default function Home() {
                   style={{ color: COLORS[detail.cluster] }}
                 >
                   <i style={{ background: COLORS[detail.cluster] }} />
-                  {CLUSTER_NAMES[detail.cluster]}
+                  {clusterNames[detail.cluster]}
                 </span>
                 <SheetTitle className="detail-title">{detail.title}</SheetTitle>
                 <SheetDescription className="detail-description">
@@ -2585,7 +2705,19 @@ export default function Home() {
                 </details>
               </div>
               <div className="detail-section">
-                <div className="section-label">Connected occupations</div>
+                <div className="section-label">
+                  {basis === 'skills'
+                    ? 'Similar skill profiles'
+                    : 'Similar work activities'}
+                </div>
+                {basis === 'skills' && (
+                  <p className="microcopy">
+                    {70 - (detail.imputedMeasurements ?? 0)} of 70 skill
+                    measurements reported. Missing measurements use dataset
+                    medians for this layout only; your fit score keeps them
+                    unknown.
+                  </p>
+                )}
                 {detail.neighbors.slice(0, 5).map(([id, similarity]) => {
                   const o = byId.get(id);
                   return o ? (
@@ -2598,7 +2730,9 @@ export default function Home() {
                       <span>
                         {o.title}
                         <small>
-                          {Math.round(similarity * 100)}% activity similarity
+                          {Math.round(similarity * 100)}/100{' '}
+                          {basis === 'skills' ? 'skill-profile' : 'activity'}{' '}
+                          similarity
                         </small>
                       </span>
                       <strong>
@@ -2629,7 +2763,23 @@ export default function Home() {
           <SheetDescription>
             Where the data comes from, and how to read it.
           </SheetDescription>
-          <h3>923 occupations. Shared responsibilities.</h3>
+          <h3>Cluster by skills or work activities.</h3>
+          <p>
+            Database exploration offers two independent layouts. Skills uses 35
+            O*NET skill levels and their 35 importance ratings, standardized so
+            each measurement has equal scale. Twelve K-means clusters and a
+            Euclidean UMAP projection are computed from those profiles. Titles,
+            SOC groups, and industries are not inputs. Labels identify
+            distinguishing skills, and a selected group shows its reported mean
+            levels.
+          </p>
+          <p>
+            {data?.layouts.skills.imputedValues} missing skill measurements are
+            filled with column medians for clustering and positioning only. They
+            remain missing for career fit. Connected roles use cosine similarity
+            of standardized skill profiles, an index rather than a percentage of
+            shared skills.
+          </p>
           <p>
             The map uses {data?.activities.length.toLocaleString()} standardized
             Detailed Work Activities from the O*NET 31.0 Database. Common
@@ -2640,7 +2790,7 @@ export default function Home() {
           <p>
             Nearby dots suggest related responsibilities. The two-dimensional
             layout distorts some distances. The connection scores in occupation
-            details use the original activity profiles.
+            details use the original feature profiles for the selected layout.
           </p>
           <p>
             {data?.excluded} occupations without task-to-activity mappings are

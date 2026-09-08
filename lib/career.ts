@@ -15,20 +15,6 @@ export const COLORS = [
   '#8ca6c0',
   '#d5cd93',
 ];
-export const CLUSTER_NAMES = [
-  'Transport & logistics',
-  'Engineering & design',
-  'Repair & maintenance',
-  'Business support',
-  'School education',
-  'Health & care',
-  'Science & technology',
-  'Production & processing',
-  'Sales & services',
-  'Research & teaching',
-  'Trades & practical work',
-  'Leadership & management',
-];
 export type WagePoint = { value: number; capped: boolean } | null;
 export type Occupation = {
   id: string;
@@ -43,6 +29,7 @@ export type Occupation = {
   skills: (number | null)[];
   importance: (number | null)[];
   neighbors: [string, number][];
+  imputedMeasurements?: number;
   aliases?: string[];
   abilities?: (number | null)[];
   ai?: {
@@ -77,6 +64,18 @@ export type Occupation = {
     error?: string;
   };
 };
+export type Cluster = {
+  id: number;
+  name: string;
+  count: number;
+  x: number;
+  y: number;
+  features: string[];
+  representatives: string[];
+  meanLevels?: number[];
+  featureBasis?: 'relative-demand' | 'reported-level';
+};
+export type ClusterBasis = 'activities' | 'skills';
 export type Dataset = {
   version: string;
   excluded: number;
@@ -86,18 +85,37 @@ export type Dataset = {
   abilities: { id: string; name: string }[];
   aiRetrieved?: string;
   activities: string[];
-  clusters: {
-    id: number;
-    count: number;
-    x: number;
-    y: number;
-    activities: string[];
-    representatives: string[];
-  }[];
+  clusters: Cluster[];
+  layouts: {
+    skills: {
+      method: string;
+      dimensions: number;
+      imputedValues: number;
+      clusters: Cluster[];
+      occupations: Record<
+        string,
+        Pick<
+          Occupation,
+          'x' | 'y' | 'cluster' | 'neighbors' | 'imputedMeasurements'
+        >
+      >;
+    };
+  };
   occupations: Occupation[];
   wageSource?: string;
   wageRetrieved?: string;
 };
+export function occupationLayout(
+  data: Dataset | null,
+  basis: ClusterBasis,
+): Occupation[] {
+  if (!data) return [];
+  if (basis === 'activities') return data.occupations;
+  return data.occupations.map((o) => ({
+    ...o,
+    ...data.layouts.skills.occupations[o.id],
+  }));
+}
 export type Profile = Record<string, number>;
 export function compileSkills(
   jobs: Occupation[],
