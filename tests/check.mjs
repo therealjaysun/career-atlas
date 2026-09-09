@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { observeViewport } from '../lib/viewport.ts';
 import {
+  workStyles,
+  matchesWorkStyle,
+  workStyleColor,
+  workStyleLandscape,
+} from '../lib/work-style.ts';
+import {
   alignment,
   pathQuality,
   DEFAULT_CRITERIA,
@@ -32,6 +38,121 @@ import {
 const d = JSON.parse(
   readFileSync(new URL('../public/onet.json', import.meta.url)),
 );
+// Work-style filtering and splitting retain real subclusters, missingness, and source data.
+{
+  const styles = workStyles(d);
+  assert.equal(styles.size, 923);
+  const known = [...styles.values()].filter((s) => s.balance !== null);
+  assert.equal(known.length, 905);
+  assert(known.every((s) => s.balance >= 0 && s.balance <= 100));
+  assert(styles.get('47-2061.00').balance > styles.get('15-1252.00').balance);
+  assert(
+    styles.get('29-1141.00').physical > 0 &&
+      styles.get('29-1141.00').knowledge > 0,
+  );
+  assert.deepEqual(workStyles(null), new Map());
+  assert.deepEqual(
+    workStyles({ ...d, occupations: [...d.occupations].reverse() }),
+    styles,
+  );
+  const missing = [...styles.values()].find((s) => s.balance === null);
+  assert(matchesWorkStyle(missing, 'all', 50));
+  for (const direction of ['knowledge', 'physical']) {
+    assert(!matchesWorkStyle(missing, direction, 50));
+    for (const invalid of [NaN, Infinity, -1, 101])
+      assert(!matchesWorkStyle(known[0], direction, invalid));
+  }
+  for (const threshold of [0, 25, 50, 75, 100]) {
+    for (const s of known) {
+      const physical = matchesWorkStyle(s, 'physical', threshold);
+      const knowledge = matchesWorkStyle(s, 'knowledge', threshold);
+      assert(physical || knowledge);
+      assert.equal(physical && knowledge, s.balance === threshold);
+    }
+  }
+  // Real zero is measured; below 80% coverage is unknown. Ties and a singleton have midpoint ranks.
+  const abilities = ['1.A.3.', '1.A.2.', '1.A.1.'].flatMap((prefix) =>
+    Array.from({ length: 5 }, (_, i) => ({ id: prefix + i })),
+  );
+  const zero = { id: 'zero', abilities: Array(15).fill(0) };
+  const covered = { id: 'covered', abilities: [null, ...Array(14).fill(0)] };
+  const sparse = {
+    id: 'sparse',
+    abilities: [null, null, ...Array(13).fill(0)],
+  };
+  const sample = workStyles({
+    abilities,
+    occupations: [zero, covered, sparse],
+  });
+  assert.equal(sample.get('zero').balance, 50);
+  assert.equal(sample.get('covered').balance, 50);
+  assert.equal(sample.get('sparse').balance, null);
+  assert.equal(
+    workStyles({ abilities, occupations: [zero] }).get('zero').balance,
+    50,
+  );
+  assert.equal(workStyleColor(null), workStyleColor(NaN));
+  assert.notEqual(workStyleColor(0), workStyleColor(100));
+  for (const basis of ['skills', 'activities']) {
+    const source = occupationLayout(d, basis);
+    const groups = basis === 'skills' ? d.layouts.skills.clusters : d.clusters;
+    const original = JSON.stringify(source);
+    const filtered = filterDatabase(
+      source,
+      { industries: ['31'], minPay: 80000, maxPay: 180000 },
+      2,
+      'annual',
+    ).filter((o) => matchesWorkStyle(styles.get(o.id), 'knowledge', 40));
+    assert(filtered.length > 0 && filtered.length < source.length);
+    for (const roles of [source, filtered, source.slice(0, 1), []]) {
+      const split = workStyleLandscape(roles, groups, styles, 0.25);
+      assert.deepEqual(split, workStyleLandscape(roles, groups, styles, 0.25));
+      assert.deepEqual(
+        split.occupations.map((o) => o.id),
+        roles.map((o) => o.id),
+      );
+      assert.equal(
+        split.clusters.reduce((sum, c) => sum + c.count, 0) +
+          split.unknownCount,
+        roles.length,
+      );
+      assert.equal(
+        new Set(split.clusters.map((c) => c.labelKey)).size,
+        split.clusters.length,
+      );
+      for (const [i, o] of split.occupations.entries()) {
+        assert.equal(o.cluster, roles[i].cluster);
+        assert.equal(o.neighbors, roles[i].neighbors);
+        assert.equal(o.abilities, roles[i].abilities);
+        assert(o.x >= 0 && o.x <= 1 && o.y >= 0 && o.y <= 1);
+        const score = styles.get(o.id).balance;
+        if (score === null) assert.equal(o.y, 0.93);
+        else {
+          const b = split.bounds[score >= 50 ? 'physical' : 'knowledge'];
+          assert(o.x >= b.left && o.x <= b.right);
+        }
+      }
+      for (const zoom of [0.7, 1, 5]) {
+        const labels = clusterLabels(split.clusters, zoom, 1500, 900);
+        if (roles.length) assert(labels.length > 0);
+        for (const label of labels) {
+          const bounds = split.clusters.find(
+            (c) => c.labelKey === label.key,
+          ).labelBounds;
+          assert(
+            label.x >= mapPoint({ x: bounds.left, y: 0 }, 1500, 900).x - 1e-9,
+          );
+          assert(
+            label.x + label.width <=
+              mapPoint({ x: bounds.right, y: 0 }, 1500, 900).x + 1e-9,
+          );
+          assert(Math.abs(label.scale * zoom - 1) < 1e-10);
+        }
+      }
+    }
+    assert.equal(JSON.stringify(source), original);
+  }
+}
 // Resize delivery must not synchronously resize the observed layout again.
 {
   const original = {

@@ -12,6 +12,7 @@ import {
 } from 'react';
 import {
   ArrowUpRight,
+  ArrowLeftRight,
   Check,
   ChevronDown,
   ChevronRight,
@@ -119,6 +120,13 @@ import {
   schoolPrograms,
   schoolMajorEvidence,
 } from '@/lib/background';
+import {
+  workStyles,
+  matchesWorkStyle,
+  workStyleColor,
+  workStyleLandscape,
+  type WorkFilter,
+} from '@/lib/work-style';
 
 const BACKGROUND_FIELDS: {
   key: keyof Background;
@@ -427,6 +435,9 @@ export default function Home() {
     [color, setColor] = useState('cluster');
   const [clusterBy, setClusterBy] = useState<ClusterBasis>('skills');
   const [exploreIndustries, setExploreIndustries] = useState<string[]>([]);
+  const [splitWork, setSplitWork] = useState(false);
+  const [workFilter, setWorkFilter] = useState<WorkFilter>('all');
+  const [workCutoff, setWorkCutoff] = useState(50);
   const [explorePay, setExplorePay] = useState({
     annual: { min: '', max: '' },
     hourly: { min: '', max: '' },
@@ -505,6 +516,7 @@ export default function Home() {
     () => occupationLayout(data, basis),
     [data, basis],
   );
+  const workProfiles = useMemo(() => workStyles(data), [data]);
   const activeClusters = useMemo(
     () =>
       data
@@ -631,9 +643,21 @@ export default function Home() {
             },
             percentile,
             unit,
+          ).filter((o) =>
+            matchesWorkStyle(workProfiles.get(o.id), workFilter, workCutoff),
           )
         : searched,
-    [mode, searched, exploreIndustries, payRange, percentile, unit],
+    [
+      mode,
+      searched,
+      exploreIndustries,
+      payRange,
+      percentile,
+      unit,
+      workProfiles,
+      workFilter,
+      workCutoff,
+    ],
   );
   const candidates = useMemo(
     () =>
@@ -676,7 +700,7 @@ export default function Home() {
       ),
     [candidates, scores, quality, criteria.minFit, treeIncludeUnscored],
   );
-  const landscape = useMemo(
+  const baseLandscape = useMemo(
     () =>
       careerLandscape(
         isTree ? tree.ranked : candidates,
@@ -686,18 +710,53 @@ export default function Home() {
       ),
     [candidates, activeClusters, quality, focusPaths, isTree, tree.ranked],
   );
+  const splitLandscape = useMemo(
+    () =>
+      mode === 'explore' && splitWork
+        ? workStyleLandscape(
+            candidates,
+            activeClusters,
+            workProfiles,
+            !collapsed && mapSize.width > 760 ? 360 / mapSize.width : 0,
+          )
+        : null,
+    [
+      mode,
+      splitWork,
+      candidates,
+      activeClusters,
+      workProfiles,
+      collapsed,
+      mapSize.width,
+    ],
+  );
+  const landscape = splitLandscape ?? baseLandscape;
   const labels = useMemo(
     () =>
       clusterLabels(landscape.clusters, view.k, mapSize.width, mapSize.height),
     [landscape.clusters, view.k, mapSize],
   );
   const visible = landscape.occupations;
+  const workCounts = useMemo(
+    () =>
+      visible.reduce(
+        (counts, o) => {
+          const score = workProfiles.get(o.id)?.balance;
+          counts[
+            score == null ? 'unknown' : score >= 50 ? 'physical' : 'knowledge'
+          ]++;
+          return counts;
+        },
+        { knowledge: 0, physical: 0, unknown: 0 },
+      ),
+    [visible, workProfiles],
+  );
   const mapById = useMemo(
     () => new Map(visible.map((o) => [o.id, o])),
     [visible],
   );
   const hiddenCount = candidates.length - visible.length;
-  const layoutKey = `${basis}:${focusPaths}:${layout}:${mapSize.width}:${mapSize.height}:${visible.map((o) => o.id).join(',')}`;
+  const layoutKey = `${basis}:${focusPaths}:${layout}:${!!splitLandscape}:${splitLandscape ? collapsed : ''}:${mapSize.width}:${mapSize.height}:${visible.map((o) => o.id).join(',')}`;
   const [fittedLayout, setFittedLayout] = useState(layoutKey);
   useEffect(() => {
     mapViewport.current?.scrollTo(0, 0);
@@ -776,6 +835,8 @@ export default function Home() {
     setZone(0);
     if (mode === 'explore') {
       setExploreIndustries([]);
+      setWorkFilter('all');
+      setWorkCutoff(50);
       setExplorePay({
         annual: { min: '', max: '' },
         hourly: { min: '', max: '' },
@@ -884,6 +945,7 @@ export default function Home() {
             setFocusIndex(0);
             setView({ x: 0, y: 0, k: 1 });
             if (v === 'explore' && color === 'quality') setColor('cluster');
+            if (v === 'career' && color === 'work') setColor('cluster');
           }}
         >
           <TabsList className="mode-switch">
@@ -932,6 +994,12 @@ export default function Home() {
                     <DollarSign />
                     Pay
                   </TabsTrigger>
+                  {mode === 'explore' && (
+                    <TabsTrigger value="work">
+                      <ArrowLeftRight />
+                      Work style
+                    </TabsTrigger>
+                  )}
                   {mode === 'career' && (
                     <TabsTrigger value="quality">
                       <Compass />
@@ -1042,11 +1110,13 @@ export default function Home() {
           <div className="map-caption">
             {isTree
               ? `${mapOccupations.length} of ${occupations.length} roles · ${mapOccupations.filter((o) => scores.get(o.id)?.score == null).length} unscored · highest fit first within each group · scroll to explore`
-              : focusPaths
-                ? 'Your remaining paths · activity groups resized and repacked to fit'
-                : basis === 'skills'
-                  ? 'Grouped by skill profiles · nearby roles need similar skills'
-                  : 'Grouped by activities · nearby roles share responsibilities'}
+              : splitLandscape
+                ? 'Knowledge-led ← → Physical/manual-led · original subclusters retained'
+                : focusPaths
+                  ? 'Your remaining paths · activity groups resized and repacked to fit'
+                  : basis === 'skills'
+                    ? 'Grouped by skill profiles · nearby roles need similar skills'
+                    : 'Grouped by activities · nearby roles share responsibilities'}
             {!isTree && labels.length < landscape.clusters.length && (
               <span>Zoom for more group labels</span>
             )}
@@ -1675,6 +1745,113 @@ export default function Home() {
           </>
         ) : (
           <>
+            <div className="bubble work-style-panel">
+              <div className="step-label">HOW THE WORK GETS DONE</div>
+              <h2>Physical or knowledge work?</h2>
+              <label className="work-split-toggle" htmlFor="split-work-map">
+                <Switch
+                  id="split-work-map"
+                  checked={splitWork}
+                  onCheckedChange={setSplitWork}
+                />
+                Divide the cloud into two halves
+              </label>
+              <p className="microcopy">
+                Keep each skill or activity subcluster inside its knowledge-led
+                or physical/manual-led half. Mixed roles sit near the middle of
+                the index.
+              </p>
+              <div className="label-value">
+                <label className="field-label" htmlFor="work-filter-direction">
+                  Show roles
+                </label>
+                <button
+                  className="text-button"
+                  disabled={workFilter === 'all'}
+                  onClick={() =>
+                    setWorkFilter(
+                      workFilter === 'physical' ? 'knowledge' : 'physical',
+                    )
+                  }
+                >
+                  <ArrowLeftRight size={14} />
+                  Invert
+                </button>
+              </div>
+              <Select
+                value={workFilter}
+                onValueChange={(v) => setWorkFilter(v as WorkFilter)}
+              >
+                <SelectTrigger
+                  id="work-filter-direction"
+                  className="full-select"
+                  aria-label="Work style filter direction"
+                >
+                  <SelectValue>
+                    {workFilter === 'all'
+                      ? 'All work styles'
+                      : workFilter === 'physical'
+                        ? 'More physical / manual work'
+                        : 'More knowledge work'}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All work styles</SelectItem>
+                  <SelectItem value="knowledge">More knowledge work</SelectItem>
+                  <SelectItem value="physical">
+                    More physical / manual work
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="work-cutoff">
+                <div className="label-value">
+                  <span id="work-cutoff-label">Work-mix cutoff</span>
+                  <strong>{workCutoff}/100</strong>
+                </div>
+                <Slider
+                  aria-labelledby="work-cutoff-label"
+                  aria-describedby="work-filter-hint"
+                  disabled={workFilter === 'all'}
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={[workCutoff]}
+                  onValueChange={(v) =>
+                    setWorkCutoff(Array.isArray(v) ? v[0] : v)
+                  }
+                />
+                <div className="work-scale-labels">
+                  <span>Knowledge · 0</span>
+                  <span>Physical/manual · 100</span>
+                </div>
+              </div>
+              <p className="microcopy" id="work-filter-hint">
+                {workFilter === 'all'
+                  ? 'Choose a direction to filter with the slider.'
+                  : `Showing index ${workFilter === 'physical' ? `${workCutoff}–100` : `0–${workCutoff}`}. Invert keeps the cutoff and shows the other side. Roles with incomplete data are excluded.`}
+              </p>
+              <div className="work-counts" aria-live="polite">
+                <span>
+                  <strong>{workCounts.knowledge}</strong> knowledge-led
+                </span>
+                <span>
+                  <strong>{workCounts.physical}</strong> physical/manual-led
+                </span>
+                {!!workCounts.unknown && (
+                  <span>
+                    <strong>{workCounts.unknown}</strong> unclassified
+                  </span>
+                )}
+              </div>
+              <p className="microcopy">
+                A relative index from O*NET ability requirements, not time spent
+                on tasks or an official collar category. Many jobs need both.
+              </p>
+              <button className="text-button" onClick={() => setColor('work')}>
+                Color dots by work style
+                <ArrowUpRight size={14} />
+              </button>
+            </div>
             <div className="bubble">
               <div className="step-label">FIND YOUR CURIOSITY</div>
               <h2>Every role has a story.</h2>
@@ -1892,7 +2069,7 @@ export default function Home() {
               )}
               {!visible.length && (
                 <p className="empty-hint">
-                  No occupations match this combination. Adjust the pay range,
+                  No occupations match this combination. Adjust work style, pay,
                   industries, or search, or clear all filters.
                 </p>
               )}
@@ -2081,6 +2258,61 @@ export default function Home() {
                     : `translate(${view.x} ${view.y}) scale(${view.k})`
                 }
               >
+                {splitLandscape && (
+                  <g className="work-map-halves" aria-hidden="true">
+                    <line
+                      x1={point({ x: splitLandscape.middle, y: 0.12 }).x}
+                      x2={point({ x: splitLandscape.middle, y: 0.82 }).x}
+                      y1={point({ x: 0, y: 0.12 }).y}
+                      y2={point({ x: 0, y: 0.82 }).y}
+                      stroke="#aab3a9"
+                      strokeDasharray={`${5 / view.k} ${7 / view.k}`}
+                      strokeWidth={1 / view.k}
+                    />
+                    {(['knowledge', 'physical'] as const).map((half) => {
+                      const b = splitLandscape.bounds[half];
+                      const p = point({ x: (b.left + b.right) / 2, y: 0.1 });
+                      return (
+                        <g key={half}>
+                          <text
+                            x={p.x}
+                            y={p.y}
+                            textAnchor="middle"
+                            fontSize={16 / view.k}
+                            fill={workStyleColor(
+                              half === 'knowledge' ? 0 : 100,
+                            )}
+                          >
+                            {half === 'knowledge'
+                              ? 'Knowledge-led'
+                              : 'Physical / manual-led'}
+                          </text>
+                          <text
+                            x={p.x}
+                            y={p.y + 20 / view.k}
+                            textAnchor="middle"
+                            fontSize={13 / view.k}
+                            fill="#63746a"
+                          >
+                            {workCounts[half]} roles
+                          </text>
+                        </g>
+                      );
+                    })}
+                    {!!splitLandscape.unknownCount && (
+                      <text
+                        x={point({ x: splitLandscape.middle, y: 0.86 }).x}
+                        y={point({ x: 0, y: 0.86 }).y}
+                        textAnchor="middle"
+                        fontSize={13 / view.k}
+                        fill="#63746a"
+                      >
+                        {splitLandscape.unknownCount} roles with incomplete
+                        ability data
+                      </text>
+                    )}
+                  </g>
+                )}
                 <g className="connections" aria-hidden="true">
                   {!isTree &&
                     visible.flatMap((o) =>
@@ -2216,11 +2448,13 @@ export default function Home() {
                   const active = selected === o.id || hovered === o.id;
                   const fill = isTree
                     ? QUALITY[quality.get(o.id)!.status].color
-                    : color === 'pay'
-                      ? payColor(wageAt(o, percentile, unit), unit)
-                      : color === 'quality'
-                        ? QUALITY[quality.get(o.id)!.status].color
-                        : COLORS[o.cluster];
+                    : color === 'work' && mode === 'explore'
+                      ? workStyleColor(workProfiles.get(o.id)?.balance)
+                      : color === 'pay'
+                        ? payColor(wageAt(o, percentile, unit), unit)
+                        : color === 'quality'
+                          ? QUALITY[quality.get(o.id)!.status].color
+                          : COLORS[o.cluster];
                   const opacity = bright
                     ? scores.get(o.id)?.score == null
                       ? 0.5
@@ -2236,7 +2470,7 @@ export default function Home() {
                           ? 0
                           : -1
                       }
-                      aria-label={`${o.title}, ${scores.get(o.id)?.score == null ? 'unscored' : `fit ${score}/100, ${scores.get(o.id)?.coverage}% coverage`}, ${QUALITY[quality.get(o.id)!.status].label}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}${aiOverlay ? `, ${aiLabel(o, aiMetric)}` : ''}`}
+                      aria-label={`${o.title}, ${scores.get(o.id)?.score == null ? 'unscored' : `fit ${score}/100, ${scores.get(o.id)?.coverage}% coverage`}, ${QUALITY[quality.get(o.id)!.status].label}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}${mode === 'explore' ? `, work mix ${workProfiles.get(o.id)?.balance == null ? 'unclassified' : `${workProfiles.get(o.id)!.balance} out of 100, higher means more physical or manual work`}` : ''}${aiOverlay ? `, ${aiLabel(o, aiMetric)}` : ''}`}
                       className="occupation-node"
                       onFocus={(event) => {
                         setFocusIndex(i);
@@ -2279,6 +2513,9 @@ export default function Home() {
                     >
                       <title>
                         {o.title}
+                        {mode === 'explore'
+                          ? ` · Work mix ${workProfiles.get(o.id)?.balance == null ? 'unclassified' : `${workProfiles.get(o.id)!.balance}/100`}`
+                          : ''}
                         {missingSkills
                           ? ' · No reported skill measurements; position imputed'
                           : ''}
@@ -2373,7 +2610,7 @@ export default function Home() {
                 {!isTree &&
                   labels.map((label) => (
                     <g
-                      key={label.id}
+                      key={label.key}
                       className="cluster-label"
                       aria-hidden="true"
                     >
@@ -2463,6 +2700,14 @@ export default function Home() {
             {clusterNames[hover.cluster]}
           </div>
           <strong>{hover.title}</strong>
+          {mode === 'explore' && (
+            <span>
+              Work mix:{' '}
+              {workProfiles.get(hover.id)?.balance == null
+                ? 'unclassified'
+                : `${workProfiles.get(hover.id)!.balance}/100 · higher = more physical/manual`}
+            </span>
+          )}
           {basis === 'skills' && !!hover.imputedMeasurements && (
             <small>
               {70 - hover.imputedMeasurements}/70 skill measurements reported ·
@@ -2619,6 +2864,17 @@ export default function Home() {
                 {q.label}
               </span>
             ))
+        ) : color === 'work' && mode === 'explore' ? (
+          <>
+            <span>Knowledge · 0</span>
+            <i className="work-gradient" />
+            <span>100 · Physical/manual</span>
+            <span
+              className="unknown-dot"
+              style={{ background: workStyleColor(null) }}
+            />
+            Incomplete data
+          </>
         ) : color === 'pay' ? (
           <>
             <span>Lower pay</span>
@@ -3143,6 +3399,57 @@ export default function Home() {
                   </span>
                 </div>
               </div>
+              {mode === 'explore' && (
+                <section className="detail-section work-detail">
+                  <h3>Physical and knowledge demands</h3>
+                  <p>
+                    Work-mix index:{' '}
+                    <strong>
+                      {workProfiles.get(detail.id)?.balance == null
+                        ? 'Unclassified'
+                        : `${workProfiles.get(detail.id)!.balance}/100`}
+                    </strong>
+                    . Higher means relatively more physical/manual work.
+                  </p>
+                  <dl className="work-demand-grid">
+                    {(['physical', 'manual', 'knowledge'] as const).map(
+                      (key) => {
+                        const value = workProfiles.get(detail.id)?.[key];
+                        return (
+                          <div key={key}>
+                            <dt>
+                              {key === 'physical'
+                                ? 'Strength & movement'
+                                : key === 'manual'
+                                  ? 'Manual control'
+                                  : 'Cognitive demands'}
+                            </dt>
+                            <dd>
+                              {value == null
+                                ? 'Not enough data'
+                                : `${value.toFixed(1)} / 7`}
+                            </dd>
+                          </div>
+                        );
+                      },
+                    )}
+                  </dl>
+                  <p className="microcopy">
+                    Mean reported requirement levels. The index compares
+                    physical/manual and cognitive demand ranks across all scored
+                    roles; it is not a percentage of working time.
+                  </p>
+                  <a
+                    className="source-link"
+                    href="https://www.onetonline.org/find/descriptor/browse/1.A"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    O*NET ability definitions
+                    <ExternalLink size={12} />
+                  </a>
+                </section>
+              )}
               <div className="detail-section">
                 <div className="section-label">
                   Typical education & training
@@ -3648,6 +3955,44 @@ export default function Home() {
             {data?.excluded} occupations without task-to-activity mappings are
             excluded from the map.
           </p>
+          <h3>Physical and knowledge work.</h3>
+          <p>
+            The work-mix index uses O*NET physical (1.A.3), psychomotor/manual
+            (1.A.2), and cognitive (1.A.1) ability requirements. Each domain
+            needs at least 80% of its measurements. The mean physical and manual
+            levels are averaged, then ranked across all complete occupations;
+            cognitive mean levels are ranked separately. The index averages the
+            physical/manual percentile and the inverse cognitive percentile,
+            from 0 (relatively knowledge-led) to 100 (relatively
+            physical/manual-led). Ties share a rank. Filters never change this
+            reference population.
+          </p>
+          <p>
+            This is an exploratory comparison, not a validated collar category,
+            percentage of working time, or assessment of an individual’s
+            capability. Role details show all three mean requirement levels on
+            O*NET’s 0–7 scale. Many occupations require both physical and
+            cognitive abilities.
+          </p>
+          <p>
+            The split view places indices below 50 on the knowledge side and
+            indices of 50 or higher on the physical/manual side, retaining
+            original subclusters and similarity scores. Each half rescales the
+            original coordinates; distances between halves are not similarity
+            measurements. Unclassified roles appear in a separate row. An active
+            work-style filter excludes them and includes its cutoff; Invert
+            swaps which side of the cutoff is shown. Pay, industry, title, and
+            group filters still apply.
+          </p>
+          <a
+            className="source-link"
+            href="https://www.onetonline.org/find/descriptor/browse/1.A"
+            target="_blank"
+            rel="noreferrer"
+          >
+            O*NET ability definitions
+            <ExternalLink size={12} />
+          </a>
           <h3>Skills illuminate possibilities.</h3>
           <p>
             Your estimated skill level is compared with each occupation’s level,
@@ -3660,8 +4005,9 @@ export default function Home() {
             The focused map resizes and packs surviving activity groups, then
             spreads their remaining roles to use the available space. Group
             membership and source similarity scores stay unchanged; these
-            compacted distances are for readability. Explore the database keeps
-            the original layouts and does not apply your career guardrails.
+            compacted distances are for readability. Explore the database
+            preserves group membership, optionally splits the map by work style,
+            and does not apply your career guardrails.
           </p>
           <h3>What makes a strong path?</h3>
           <p>

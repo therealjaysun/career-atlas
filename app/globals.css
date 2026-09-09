@@ -2371,6 +2371,76 @@ footer .mobile-info {
   margin: 5px 0;
 }
 
+.work-split-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.work-style-panel .text-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.work-cutoff {
+  margin: 20px 0 10px;
+}
+.work-cutoff [data-slot='slider'] {
+  margin: 18px 0 12px;
+}
+.work-cutoff [data-slot='slider-track'],
+.work-gradient {
+  background: linear-gradient(90deg, #2d5b77, #9f7125);
+}
+.work-cutoff [data-slot='slider-range'] {
+  background: transparent;
+}
+.work-scale-labels,
+.work-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.work-scale-labels {
+  justify-content: space-between;
+}
+.work-counts strong {
+  font-size: 14px;
+  color: var(--foreground);
+}
+.work-gradient {
+  width: 90px;
+  height: 7px;
+  border-radius: 4px;
+}
+.work-map-halves {
+  pointer-events: none;
+}
+.work-detail h3 {
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+.work-detail > p {
+  font-size: 14px;
+  line-height: 1.6;
+}
+.work-demand-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.work-demand-grid dt {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.work-demand-grid dd {
+  margin: 5px 0 0;
+  font-size: 16px;
+}
+
 /* One grid owns the workspace; controls take their actual height instead of overlapping offsets. */
 .atlas {
   --sidebar-width: 320px;

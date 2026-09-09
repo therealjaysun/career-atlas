@@ -75,6 +75,8 @@ export type Cluster = {
   representatives: string[];
   meanLevels?: number[];
   featureBasis?: 'relative-demand' | 'reported-level';
+  labelKey?: string;
+  labelBounds?: { left: number; right: number };
 };
 export type ClusterBasis = 'activities' | 'skills';
 export function mapPoint(
@@ -117,15 +119,23 @@ export function clusterLabels(
       viewportWidth,
       viewportHeight,
     );
+    const minX = c.labelBounds
+      ? mapPoint({ x: c.labelBounds.left, y: 0 }, viewportWidth, viewportHeight)
+          .x
+      : 12;
+    const maxX = c.labelBounds
+      ? mapPoint(
+          { x: c.labelBounds.right, y: 0 },
+          viewportWidth,
+          viewportHeight,
+        ).x
+      : viewportWidth - 12;
     let best = { x: 0, y: 0, score: Infinity };
     for (let dx = -3; dx <= 3; dx++) {
       for (let dy = -4; dy <= 4; dy++) {
         const x = Math.max(
-          12,
-          Math.min(
-            viewportWidth - 12 - width,
-            anchorX - width / 2 + dx * width * 0.65,
-          ),
+          minX,
+          Math.min(maxX - width, anchorX - width / 2 + dx * width * 0.65),
         );
         const y = Math.max(
           12,
@@ -158,6 +168,7 @@ export function clusterLabels(
     }
     const label = {
       id: c.id,
+      key: c.labelKey ?? String(c.id),
       name: c.name,
       lines,
       width,
@@ -170,7 +181,7 @@ export function clusterLabels(
     };
     // At narrow widths, omit colliding labels until zoom/filtering leaves room; every occupation remains visible.
     if (
-      label.width > viewportWidth - 24 ||
+      label.width > maxX - minX ||
       label.height > viewportHeight - 24 ||
       placed.some(
         (p) =>
