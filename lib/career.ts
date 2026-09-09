@@ -31,6 +31,7 @@ export type Occupation = {
   neighbors: [string, number][];
   imputedMeasurements?: number;
   aliases?: string[];
+  industries?: string[];
   abilities?: (number | null)[];
   ai?: {
     soc: string;
@@ -208,6 +209,8 @@ export type Dataset = {
     };
   };
   occupations: Occupation[];
+  industries?: { id: string; name: string; source: string }[];
+  industryRetrieved?: string;
   wageSource?: string;
   wageRetrieved?: string;
 };
@@ -582,6 +585,37 @@ export function wageAt(
   if (!Number.isInteger(index) || index < 0 || index >= PERCENTILES.length)
     return null;
   return o.wage?.[unit]?.[index] ?? null;
+}
+export function filterDatabase(
+  occupations: Occupation[],
+  filters: {
+    industries: string[];
+    minPay: number | null;
+    maxPay: number | null;
+  },
+  percentile: number,
+  unit: 'annual' | 'hourly',
+) {
+  const { industries, minPay, maxPay } = filters;
+  if (
+    [minPay, maxPay].some(
+      (value) => value !== null && (!Number.isFinite(value) || value < 0),
+    ) ||
+    (minPay !== null && maxPay !== null && minPay > maxPay)
+  )
+    return [];
+  return occupations.filter((o) => {
+    if (
+      industries.length &&
+      !industries.some((id) => o.industries?.includes(id))
+    )
+      return false;
+    if (minPay === null && maxPay === null) return true;
+    const wage = wageAt(o, percentile, unit);
+    if (!wage || (minPay !== null && wage.value < minPay)) return false;
+    // A censored wage is a lower bound, so it cannot prove a finite upper limit.
+    return maxPay === null || (!wage.capped && wage.value <= maxPay);
+  });
 }
 const moneyFormats = Object.fromEntries(
   ['annual', 'hourly'].flatMap((unit) =>

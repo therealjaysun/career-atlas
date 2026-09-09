@@ -91,6 +91,7 @@ import {
   type ClusterBasis,
   COLORS,
   searchOccupations,
+  filterDatabase,
   titleScore,
   EDUCATION,
   ENTRY_PATHS,
@@ -425,11 +426,21 @@ export default function Home() {
     [cluster, setCluster] = useState<number | null>(null),
     [color, setColor] = useState('cluster');
   const [clusterBy, setClusterBy] = useState<ClusterBasis>('skills');
+  const [exploreIndustries, setExploreIndustries] = useState<string[]>([]);
+  const [explorePay, setExplorePay] = useState({
+    annual: { min: '', max: '' },
+    hourly: { min: '', max: '' },
+  });
   const basis: ClusterBasis = mode === 'explore' ? clusterBy : 'activities';
   const searchQuery = useDeferredValue(query);
   const [percentile, setPercentile] = useState(2),
     [unit, setUnit] = useState<'annual' | 'hourly'>('annual'),
     [payOpen, setPayOpen] = useState(true);
+  const payRange = explorePay[unit];
+  const invalidPayRange =
+    payRange.min !== '' &&
+    payRange.max !== '' &&
+    Number(payRange.min) > Number(payRange.max);
   const [selected, setSelected] = useState<string | null>(null),
     [hovered, setHovered] = useState<string | null>(null),
     [about, setAbout] = useState(false);
@@ -604,10 +615,39 @@ export default function Home() {
     );
   const focusPaths =
     mode === 'career' && !isTree && hasDetails && !showAllPaths;
-  const candidates = useMemo(
-    () => searchOccupations(occupations, searchQuery, cluster, zone),
-    [occupations, searchQuery, cluster, zone],
+  const searched = useMemo(
+    () => searchOccupations(occupations, searchQuery, null, zone),
+    [occupations, searchQuery, zone],
   );
+  const databaseMatches = useMemo(
+    () =>
+      mode === 'explore'
+        ? filterDatabase(
+            searched,
+            {
+              industries: exploreIndustries,
+              minPay: payRange.min === '' ? null : Number(payRange.min),
+              maxPay: payRange.max === '' ? null : Number(payRange.max),
+            },
+            percentile,
+            unit,
+          )
+        : searched,
+    [mode, searched, exploreIndustries, payRange, percentile, unit],
+  );
+  const candidates = useMemo(
+    () =>
+      cluster === null
+        ? databaseMatches
+        : databaseMatches.filter((o) => o.cluster === cluster),
+    [databaseMatches, cluster],
+  );
+  const clusterCounts = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const o of databaseMatches)
+      counts.set(o.cluster, (counts.get(o.cluster) ?? 0) + 1);
+    return counts;
+  }, [databaseMatches]);
   const quality = useMemo(
     () =>
       new Map(
@@ -733,6 +773,14 @@ export default function Home() {
     setView({ x: 0, y: 0, k: 1 });
     setCluster(null);
     setQuery('');
+    setZone(0);
+    if (mode === 'explore') {
+      setExploreIndustries([]);
+      setExplorePay({
+        annual: { min: '', max: '' },
+        hourly: { min: '', max: '' },
+      });
+    }
   };
   const roleSelect = (id: string) => {
     setSelected(id);
@@ -1678,6 +1726,83 @@ export default function Home() {
                   </button>
                 )}
               </label>
+              <div className="database-filters">
+                <div className="filter-heading">
+                  <span>Filter occupations</span>
+                  <button onClick={reset}>Clear all</button>
+                </div>
+                <div className="label-value">
+                  <span>
+                    {unit === 'annual' ? 'Annual' : 'Hourly'} pay range
+                  </span>
+                  <strong>P{PERCENTILES[percentile]}</strong>
+                </div>
+                <div className="criteria-grid">
+                  {(['min', 'max'] as const).map((bound) => (
+                    <label key={bound}>
+                      <span className="field-label">
+                        {bound === 'min' ? 'Minimum' : 'Maximum'}
+                      </span>
+                      <span className="input-shell">
+                        <span aria-hidden="true">$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step={unit === 'annual' ? 1000 : 1}
+                          aria-label={`${bound === 'min' ? 'Minimum' : 'Maximum'} ${unit} pay`}
+                          aria-invalid={invalidPayRange}
+                          aria-describedby="explore-pay-hint"
+                          placeholder="Any"
+                          value={payRange[bound]}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setExplorePay((current) => ({
+                              ...current,
+                              [unit]: { ...current[unit], [bound]: value },
+                            }));
+                          }}
+                        />
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <p
+                  id="explore-pay-hint"
+                  className="microcopy"
+                  role={invalidPayRange ? 'alert' : undefined}
+                >
+                  {invalidPayRange
+                    ? 'Maximum pay must be at least the minimum.'
+                    : 'Uses the percentile and unit in Compensation. Unreported or uncertain pay is hidden when a limit is set.'}
+                </p>
+                <label className="field-label" htmlFor="explore-industries">
+                  Industries
+                </label>
+                <MultiPicker
+                  id="explore-industries"
+                  label="Industries"
+                  placeholder="All industries · choose one or more…"
+                  items={data?.industries ?? []}
+                  values={(data?.industries ?? []).filter((industry) =>
+                    exploreIndustries.includes(industry.id),
+                  )}
+                  onChange={(items) =>
+                    setExploreIndustries(items.map((item) => item.id))
+                  }
+                />
+                <p className="microcopy">
+                  Matches any selected industry in{' '}
+                  <a
+                    href="https://www.onetonline.org/find/industry"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    O*NET’s major-employer lists
+                  </a>
+                  . Roles can belong to several. Pay remains national for the
+                  occupation.
+                </p>
+              </div>
               <div className="filter-heading">
                 <span>
                   {basis === 'skills'
@@ -1699,7 +1824,7 @@ export default function Home() {
                   >
                     <i style={{ background: COLORS[c.id] }} />
                     <span className="cluster-name">{clusterNames[c.id]}</span>
-                    <span>{c.count}</span>
+                    <span>{clusterCounts.get(c.id) ?? 0}</span>
                   </button>
                 ))}
               </div>
@@ -1735,7 +1860,11 @@ export default function Home() {
               )}
             </div>
             <div className="bubble matches-bubble">
-              <div className="section-label">
+              <div
+                className="section-label"
+                aria-live="polite"
+                aria-atomic="true"
+              >
                 {visible.length} occupations
                 <span>P{PERCENTILES[percentile]} pay</span>
               </div>
@@ -1763,8 +1892,8 @@ export default function Home() {
               )}
               {!visible.length && (
                 <p className="empty-hint">
-                  No close titles or tasks match. Try a shorter phrase or clear
-                  your filters.
+                  No occupations match this combination. Adjust the pay range,
+                  industries, or search, or clear all filters.
                 </p>
               )}
             </div>
@@ -2314,7 +2443,6 @@ export default function Home() {
                     setPhase(4);
                   } else {
                     reset();
-                    setZone(0);
                     if (focusPaths) setShowAllPaths(true);
                   }
                 }}
@@ -3487,6 +3615,22 @@ export default function Home() {
             remain missing for career fit. Connected roles use cosine similarity
             of standardized skill profiles, an index rather than a percentage of
             shared skills.
+          </p>
+          <p>
+            Industry filters use{' '}
+            <a
+              href="https://www.onetonline.org/find/industry"
+              target="_blank"
+              rel="noreferrer"
+            >
+              O*NET’s major-employer lists
+            </a>
+            , retrieved {data?.industryRetrieved}. These list industries
+            employing at least 10% of a role’s workers in this snapshot. Smaller
+            employers may be absent. Several industries can match one role; pay
+            remains the national wage for the occupation. Pay and industry
+            filters change which roles appear, preserving the skill or activity
+            grouping.
           </p>
           <p>
             The map uses {data?.activities.length.toLocaleString()} standardized

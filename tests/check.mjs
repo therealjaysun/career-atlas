@@ -8,6 +8,7 @@ import {
   wageAt,
   money,
   searchOccupations,
+  filterDatabase,
   titleScore,
   EMPTY_BACKGROUND,
   aiValue,
@@ -456,6 +457,145 @@ assert.equal(wageAt(dev, 2).value, 135980);
 assert.equal(wageAt(dev, 4).value, 214670);
 assert.equal(wageAt(dev, 6), null);
 assert.equal(money({ value: 239200, capped: true }), '$239,200+');
+// Database filters compose without changing source records, and use the active wage scenario.
+{
+  const all = { industries: [], minPay: null, maxPay: null };
+  const missing = {
+    ...dev,
+    id: 'missing',
+    industries: ['31'],
+    wage: undefined,
+  };
+  const capped = {
+    ...dev,
+    id: 'capped',
+    industries: ['31', '54'],
+    wage: {
+      ...dev.wage,
+      annual: Array(5).fill({ value: 239200, capped: true }),
+    },
+  };
+  const roles = [dev, missing, capped];
+  assert.deepEqual(filterDatabase(roles, all, 2, 'annual'), roles);
+  assert.deepEqual(
+    filterDatabase(roles, { ...all, minPay: 200000 }, 2, 'annual'),
+    [capped],
+  );
+  assert.deepEqual(
+    filterDatabase(roles, { ...all, minPay: 200000 }, 4, 'annual'),
+    [dev, capped],
+  );
+  assert.deepEqual(
+    filterDatabase([capped], { ...all, minPay: 250000 }, 2, 'annual'),
+    [],
+  );
+  assert.deepEqual(
+    filterDatabase([capped], { ...all, maxPay: 300000 }, 2, 'annual'),
+    [],
+  );
+  assert.deepEqual(
+    filterDatabase([missing], { ...all, minPay: 0 }, 2, 'annual'),
+    [],
+  );
+  assert.deepEqual(
+    filterDatabase(roles, { ...all, minPay: 2, maxPay: 1 }, 2, 'annual'),
+    [],
+  );
+  assert.deepEqual(
+    filterDatabase(roles, { ...all, minPay: NaN }, 2, 'annual'),
+    [],
+  );
+  assert.deepEqual(
+    filterDatabase(roles, { ...all, maxPay: -1 }, 2, 'annual'),
+    [],
+  );
+  assert.deepEqual(
+    filterDatabase([dev], { ...all, minPay: 100000 }, 2, 'hourly'),
+    [],
+  );
+  const hourly = wageAt(dev, 2, 'hourly').value;
+  assert.deepEqual(
+    filterDatabase(
+      [dev],
+      { ...all, minPay: hourly, maxPay: hourly },
+      2,
+      'hourly',
+    ),
+    [dev],
+  );
+  assert.deepEqual(
+    filterDatabase(
+      [missing, capped],
+      { ...all, industries: ['54'] },
+      2,
+      'annual',
+    ),
+    [capped],
+  );
+  assert.deepEqual(
+    filterDatabase(
+      [missing, capped],
+      { ...all, industries: ['31', '54'] },
+      2,
+      'annual',
+    ),
+    [missing, capped],
+  );
+  assert.deepEqual(
+    filterDatabase(
+      [missing, capped],
+      { industries: ['31'], minPay: 200000, maxPay: null },
+      2,
+      'annual',
+    ),
+    [capped],
+  );
+  assert.deepEqual(
+    filterDatabase(roles, { ...all, industries: ['unknown'] }, 2, 'annual'),
+    [],
+  );
+  assert.equal(d.industries.length, 20);
+  const industries = new Set(d.industries.map((i) => i.id));
+  for (const o of d.occupations) {
+    assert(Array.isArray(o.industries));
+    assert.equal(new Set(o.industries).size, o.industries.length);
+    assert(o.industries.every((id) => industries.has(id)));
+  }
+  assert(dev.industries.includes('54'));
+  assert(
+    d.occupations.find((o) => o.id === '17-2112.03').industries.includes('31'),
+  );
+  for (const basis of ['skills', 'activities']) {
+    const layout = occupationLayout(d, basis);
+    const matches = filterDatabase(
+      searchOccupations(layout, 'engineer', null, 0),
+      { industries: ['31'], minPay: 80000, maxPay: 180000 },
+      2,
+      'annual',
+    );
+    assert(matches.length > 0);
+    assert(
+      matches.every(
+        (o) =>
+          o.industries.includes('31') &&
+          wageAt(o, 2).value >= 80000 &&
+          wageAt(o, 2).value <= 180000,
+      ),
+    );
+    const landscape = careerLandscape(
+      matches,
+      basis === 'skills' ? d.layouts.skills.clusters : d.clusters,
+      new Map(),
+      false,
+    );
+    assert.deepEqual(landscape.occupations, matches);
+    assert.equal(
+      landscape.clusters.reduce((sum, c) => sum + c.count, 0),
+      matches.length,
+    );
+    assert(landscape.clusters.every((c) => c.count > 0));
+  }
+}
 assert.equal(alignment(dev, {}).score, null);
 assert.equal(alignment(dev, { 0: 0 }).score, 0);
 const full = Object.fromEntries(dev.skills.map((v, i) => [i, v ?? 0]));

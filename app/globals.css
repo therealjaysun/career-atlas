@@ -1024,6 +1024,25 @@ footer > span {
   font-size: 12px;
   color: var(--muted-foreground);
 }
+.database-filters {
+  margin-top: 22px;
+  padding-top: 2px;
+  border-top: 1px solid var(--border);
+}
+.database-filters .filter-heading,
+.database-filters .filter-heading button,
+.database-filters .criteria-grid .field-label {
+  font-size: 14px;
+}
+.database-filters .label-value {
+  margin-bottom: 10px;
+}
+.database-filters .criteria-grid > label {
+  min-width: 0;
+}
+.database-filters input[aria-invalid='true'] {
+  color: var(--destructive);
+}
 .filter-heading button {
   font-size: 12px;
   background: transparent;
