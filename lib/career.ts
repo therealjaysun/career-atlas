@@ -94,7 +94,7 @@ export function clusterLabels(
   viewportWidth = 1200,
   viewportHeight = 800,
 ) {
-  const scale = 1 / Math.sqrt(zoom);
+  const scale = 1 / zoom;
   const placed: { x: number; y: number; width: number; height: number }[] = [];
   return clusters.flatMap((c) => {
     const lines = c.name.split(' · ').flatMap((part) => {

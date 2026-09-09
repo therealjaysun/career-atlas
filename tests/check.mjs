@@ -605,6 +605,14 @@ for (const clusters of [
     const labels = clusterLabels(clusters, zoom);
     assert.equal(labels.length, clusters.length);
     for (const [i, label] of labels.entries()) {
+      // Parent zoom and label scaling cancel: text stays 14px on screen.
+      assert(Math.abs(14 * label.scale * zoom - 14) < 1e-10);
+      const normal = clusterLabels(
+        [clusters.find((c) => c.id === label.id)],
+        1,
+      )[0];
+      assert(Math.abs(label.width * zoom - normal.width) < 1e-10);
+      assert(Math.abs(label.height * zoom - normal.height) < 1e-10);
       assert(
         label.x >= 0 &&
           label.y >= 0 &&
