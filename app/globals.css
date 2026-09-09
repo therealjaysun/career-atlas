@@ -2466,6 +2466,7 @@ footer .mobile-info {
   width: var(--sidebar-width);
   max-height: none;
   scrollbar-width: thin;
+  scrollbar-gutter: stable;
   scrollbar-color: var(--border) transparent;
 }
 .panel-heading {

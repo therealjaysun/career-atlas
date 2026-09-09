@@ -1,6 +1,7 @@
 'use client';
 /* oxlint-disable jsx-a11y/prefer-tag-over-role -- SVG graph buttons and CSS data meters require explicit ARIA roles. */
 import Link from 'next/link';
+import { observeViewport } from '@/lib/viewport';
 import {
   useDeferredValue,
   useEffect,
@@ -337,7 +338,7 @@ function MultiPicker({
       itemToStringLabel={(item) => item.name}
       isItemEqualToValue={(a, b) => a.id === b.id}
     >
-      <ComboboxChips ref={anchor} className="job-chips">
+      <ComboboxChips className="job-chips">
         <ComboboxValue>
           {(selected: SearchItem[]) =>
             selected.map((item) => (
@@ -347,7 +348,7 @@ function MultiPicker({
             ))
           }
         </ComboboxValue>
-        <div className="multi-picker-entry">
+        <div ref={anchor} className="multi-picker-entry">
           <ComboboxChipsInput
             id={id}
             aria-label={label}
@@ -440,18 +441,7 @@ export default function Home() {
   useEffect(() => {
     const element = mapViewport.current;
     if (!element) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const width = Math.round(entry.borderBoxSize[0].inlineSize);
-      const height = Math.round(entry.borderBoxSize[0].blockSize);
-      if (width > 0 && height > 0)
-        setMapSize((previous) =>
-          previous.width === width && previous.height === height
-            ? previous
-            : { width, height },
-        );
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
+    return observeViewport(element, setMapSize);
   }, []);
   const svgRef = useRef<SVGSVGElement>(null),
     drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(

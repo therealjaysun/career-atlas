@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { observeViewport } from '../lib/viewport.ts';
 import {
   alignment,
   pathQuality,
@@ -30,6 +31,73 @@ import {
 const d = JSON.parse(
   readFileSync(new URL('../public/onet.json', import.meta.url)),
 );
+// Resize delivery must not synchronously resize the observed layout again.
+{
+  const original = {
+    ResizeObserver: globalThis.ResizeObserver,
+    requestAnimationFrame: globalThis.requestAnimationFrame,
+    cancelAnimationFrame: globalThis.cancelAnimationFrame,
+  };
+  let notify,
+    observed,
+    disconnected = false,
+    nextFrame = 0;
+  const frames = new Map();
+  globalThis.ResizeObserver = class {
+    constructor(callback) {
+      notify = callback;
+    }
+    observe(element, options) {
+      observed = [element, options];
+    }
+    disconnect() {
+      disconnected = true;
+    }
+  };
+  globalThis.requestAnimationFrame = (callback) => {
+    frames.set(++nextFrame, callback);
+    return nextFrame;
+  };
+  globalThis.cancelAnimationFrame = (id) => frames.delete(id);
+  const resize = (width, height) =>
+    notify([{ borderBoxSize: [{ inlineSize: width, blockSize: height }] }]);
+  const paint = () => {
+    const pending = [...frames.values()];
+    frames.clear();
+    pending.forEach((callback) => callback());
+  };
+  try {
+    const element = {};
+    const sizes = [];
+    const stop = observeViewport(element, (size) => {
+      sizes.push(size);
+      resize(size.width, size.height); // Simulate layout reporting the published size again.
+    });
+    assert.deepEqual(observed, [element, { box: 'border-box' }]);
+    resize(1200, 800);
+    resize(1100, 700);
+    assert.equal(sizes.length, 0);
+    assert.equal(frames.size, 1);
+    paint();
+    assert.deepEqual(sizes, [{ width: 1100, height: 700 }]);
+    paint();
+    assert.equal(sizes.length, 1);
+    assert.equal(frames.size, 0);
+    resize(0, 0);
+    paint();
+    assert.equal(sizes.length, 1);
+    resize(1000, 600);
+    stop();
+    paint();
+    assert(disconnected);
+    assert.equal(sizes.length, 1);
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete globalThis[key];
+      else globalThis[key] = value;
+    }
+  }
+}
 const prefills = JSON.parse(
   readFileSync(new URL('../public/background-options.json', import.meta.url)),
 );
