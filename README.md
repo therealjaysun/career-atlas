@@ -63,6 +63,14 @@ This is a relative demand comparison, not a validated white/blue-collar classifi
 
 The optional split places indices below 50 on the knowledge-led half and 50 or above on the physical/manual-led half. Within each half it rescales the original coordinates, preserves every skill/activity cluster ID and source neighbor score, and supplies separate labels for each surviving subcluster. This is a layout transformation, not a new clustering model; distances across halves have no similarity interpretation. Labels retain their screen font size while zooming. The existing assertion script checks ranking, ties, zero versus missing data, coverage, inverted boundaries, combined filters, complete role retention, subgroup membership, label bounds, and immutability in both layouts.
 
+## Three-dimensional exploration
+
+The main-map **2D / 3D** control projects the existing skill/activity coordinates into a rotatable perspective view. Depth defaults to the physical/knowledge work index; it can instead show the selected wage percentile/unit or selected AI index. It extends the existing layout, preserving subgroup membership and source neighbor scores, rather than running a new 3D clustering model. The side-by-side 2D work split is suspended while 3D is active and restored when returning to 2D. Career maps support the same depth controls; the possibility tree remains 2D.
+
+Work style and AI depth use fixed 0–100 scales. Pay depth uses zero to the maximum uncensored source wage for the selected percentile/unit, computed before filtering. Missing measurements and top-coded wages remain visible in a separate row below the volume, never imputed to zero or the midpoint. Axis endpoints, hover text, and accessible occupation labels identify the displayed measure. All existing pay, industry, work-style, search, cluster, and career filters still determine membership.
+
+Drag to rotate, Shift-drag to pan, scroll or use buttons to zoom. Four rotation buttons work with keyboard and touch, and Reset restores the camera and framing without clearing filters. Perspective sizing and depth-sorted SVG nodes communicate depth; labels remain screen-sized. Painting order changes independently of keyboard navigation and ranked results. Projection runs only when its inputs change, without an idle animation loop or an additional rendering dependency.
+
 ## Outcome rules
 
 Skill alignment is importance-weighted coverage of required levels, over rated skills only; unknown skills do not become zero. Coverage is the share of total skill importance that has been rated. At least 4 rated dimensions and 20% coverage are needed before returning a strong outcome; these are explicit prototype heuristics.

@@ -24,6 +24,10 @@ import {
   careerLandscape,
   possibilityTree,
   clusterLabels,
+  cloud3D,
+  depthDimension,
+  rotateCamera,
+  INITIAL_CAMERA,
   mapPoint,
   pickerSuggestions,
   validPrefills,
@@ -152,6 +156,172 @@ const d = JSON.parse(
     }
     assert.equal(JSON.stringify(source), original);
   }
+}
+// The third dimension preserves membership while adding real, rotatable depth.
+{
+  const work = workStyles(d);
+  const before = JSON.stringify(d);
+  const dimensions = ['work', 'pay', 'ai'].map((axis) =>
+    depthDimension(d.occupations, work, axis, 2, 'annual', 'observed'),
+  );
+  for (const dimension of dimensions) {
+    assert.equal(dimension.values.size, d.occupations.length);
+    assert(
+      [...dimension.values.values()].every(
+        (v) => v === null || (v >= 0 && v <= 1),
+      ),
+    );
+    for (const basis of ['skills', 'activities']) {
+      const roles = occupationLayout(d, basis);
+      const groups =
+        basis === 'skills' ? d.layouts.skills.clusters : d.clusters;
+      for (const camera of [
+        INITIAL_CAMERA,
+        rotateCamera(INITIAL_CAMERA, 600, 600),
+        rotateCamera(INITIAL_CAMERA, -900, -900),
+      ]) {
+        for (const [width, height, inset] of [
+          [1500, 900, 360],
+          [900, 600, 360],
+          [360, 600, 0],
+        ]) {
+          const scene = cloud3D(
+            roles,
+            groups,
+            dimension.values,
+            camera,
+            width,
+            height,
+            inset,
+          );
+          assert.deepEqual(
+            scene.occupations.map((o) => o.id),
+            roles.map((o) => o.id),
+          );
+          assert.equal(scene.edges.length, 12);
+          assert.equal(
+            scene.clusters.reduce((sum, c) => sum + c.count, 0),
+            roles.length,
+          );
+          assert.equal(
+            scene.unknownCount,
+            roles.filter((o) => dimension.values.get(o.id) === null).length,
+          );
+          for (const [i, o] of scene.occupations.entries()) {
+            assert.equal(o.cluster, roles[i].cluster);
+            assert.equal(o.neighbors, roles[i].neighbors);
+            const point = mapPoint(o, width, height);
+            assert(Number.isFinite(point.x) && Number.isFinite(point.y));
+            assert(
+              point.x >= 0 &&
+                point.x <= width &&
+                point.y >= 0 &&
+                point.y <= height,
+            );
+            assert(scene.points.get(o.id).scale > 0);
+          }
+          // Filtering a measured role set cannot shift its coordinate or depth scale.
+          const subset = roles
+            .filter((o) => dimension.values.get(o.id) !== null)
+            .slice(0, 10);
+          const filtered = cloud3D(
+            subset,
+            groups,
+            dimension.values,
+            camera,
+            width,
+            height,
+            inset,
+          );
+          for (const o of subset)
+            assert.deepEqual(filtered.points.get(o.id), scene.points.get(o.id));
+          for (const zoom of [0.7, 1, 5]) {
+            const labels = clusterLabels(scene.clusters, zoom, width, height);
+            assert(labels.length > 0);
+            assert(
+              labels.every((label) => Math.abs(label.scale * zoom - 1) < 1e-10),
+            );
+          }
+        }
+      }
+    }
+  }
+  const empty = cloud3D([], [], new Map(), INITIAL_CAMERA, 1200, 800);
+  assert.deepEqual(empty.occupations, []);
+  assert.deepEqual(empty.clusters, []);
+  assert.equal(empty.unknownCount, 0);
+  // Identical X/Y with different Z must have distinct depth and projected positions.
+  const a = empty.project({ x: 0.6, y: 0.6, z: 0 });
+  const b = empty.project({ x: 0.6, y: 0.6, z: 1 });
+  assert.notEqual(a.depth, b.depth);
+  assert.notEqual(a.x, b.x);
+  assert.notEqual(a.scale, b.scale);
+  const rotated = cloud3D(
+    [],
+    [],
+    new Map(),
+    rotateCamera(INITIAL_CAMERA, 50, 20),
+    1200,
+    800,
+  );
+  assert.notDeepEqual(rotated.project({ x: 0.6, y: 0.6, z: 1 }), b);
+  assert.equal(rotateCamera(INITIAL_CAMERA, 0, 10000).pitch, 1.2);
+  assert.equal(rotateCamera(INITIAL_CAMERA, 0, -10000).pitch, -1.2);
+  const fake = [
+    {
+      id: 'zero',
+      ai: { observed: 0 },
+      wage: { annual: [null, null, { value: 0, capped: false }] },
+    },
+    {
+      id: 'capped',
+      wage: { annual: [null, null, { value: 240000, capped: true }] },
+    },
+    { id: 'missing' },
+  ];
+  const pay = depthDimension(fake, new Map(), 'pay', 2, 'annual', 'observed');
+  const ai = depthDimension(fake, new Map(), 'ai', 2, 'annual', 'observed');
+  assert.equal(pay.values.get('zero'), 0);
+  assert.equal(ai.values.get('zero'), 0);
+  assert.equal(pay.values.get('capped'), null);
+  assert.equal(pay.values.get('missing'), null);
+  assert.equal(ai.values.get('missing'), null);
+  assert.notDeepEqual(
+    depthDimension(d.occupations, work, 'pay', 4, 'annual', 'observed').values,
+    dimensions[1].values,
+  );
+  assert.notDeepEqual(
+    depthDimension(d.occupations, work, 'ai', 2, 'annual', 'applicability')
+      .values,
+    dimensions[2].values,
+  );
+  const hourly = depthDimension(
+    d.occupations,
+    work,
+    'pay',
+    2,
+    'hourly',
+    'observed',
+  );
+  assert(hourly.label.includes('hourly'));
+  assert(hourly.high.includes('$'));
+  assert.equal(JSON.stringify(d), before);
+  const started = performance.now();
+  for (let i = 0; i < 60; i++) {
+    const scene = cloud3D(
+      d.occupations,
+      d.clusters,
+      dimensions[0].values,
+      rotateCamera(INITIAL_CAMERA, i, i),
+      1500,
+      900,
+      360,
+    );
+    clusterLabels(scene.clusters, 1, 1500, 900);
+  }
+  console.log(
+    `3D projection + labels: ${((performance.now() - started) / 60).toFixed(1)}ms/frame for ${d.occupations.length} roles (excludes browser paint).`,
+  );
 }
 // Resize delivery must not synchronously resize the observed layout again.
 {

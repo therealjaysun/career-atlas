@@ -2418,6 +2418,26 @@ footer .mobile-info {
 .work-map-halves {
   pointer-events: none;
 }
+.depth-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  font-size: 14px;
+}
+.depth-select [data-slot='select-trigger'] {
+  width: 240px;
+  min-width: 0;
+  font-size: 14px;
+}
+.depth-frame {
+  pointer-events: none;
+}
+.cloud-3d .occupation-node,
+.cloud-3d .occupation-node .node-core,
+.cloud-3d .cluster-label > g {
+  transition: none;
+}
 .work-detail h3 {
   font-size: 16px;
   margin-bottom: 12px;

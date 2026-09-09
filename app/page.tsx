@@ -13,6 +13,11 @@ import {
 import {
   ArrowUpRight,
   ArrowLeftRight,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  Box,
   Check,
   ChevronDown,
   ChevronRight,
@@ -84,6 +89,11 @@ import {
   careerLandscape,
   possibilityTree,
   clusterLabels,
+  cloud3D,
+  depthDimension,
+  rotateCamera,
+  INITIAL_CAMERA,
+  type DepthAxis,
   mapPoint,
   QUALITY,
   DEFAULT_CRITERIA,
@@ -436,6 +446,9 @@ export default function Home() {
   const [clusterBy, setClusterBy] = useState<ClusterBasis>('skills');
   const [exploreIndustries, setExploreIndustries] = useState<string[]>([]);
   const [splitWork, setSplitWork] = useState(false);
+  const [threeD, setThreeD] = useState(false);
+  const [depthAxis, setDepthAxis] = useState<DepthAxis>('work');
+  const [camera, setCamera] = useState(INITIAL_CAMERA);
   const [workFilter, setWorkFilter] = useState<WorkFilter>('all');
   const [workCutoff, setWorkCutoff] = useState(50);
   const [explorePay, setExplorePay] = useState({
@@ -465,9 +478,14 @@ export default function Home() {
     return observeViewport(element, setMapSize);
   }, []);
   const svgRef = useRef<SVGSVGElement>(null),
-    drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(
-      null,
-    );
+    drag = useRef<{
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      camera: typeof INITIAL_CAMERA;
+      rotate: boolean;
+    } | null>(null);
   useEffect(() => {
     const c = new AbortController();
     fetch('/onet.json', { signal: c.signal })
@@ -617,6 +635,7 @@ export default function Home() {
   );
   const hasProfile = Object.keys(profile).length > 0 || planned !== null;
   const isTree = mode === 'career' && layout === 'tree';
+  const is3D = threeD && !isTree;
   const hasDetails =
     hasProfile ||
     roles.length > 0 ||
@@ -712,7 +731,7 @@ export default function Home() {
   );
   const splitLandscape = useMemo(
     () =>
-      mode === 'explore' && splitWork
+      mode === 'explore' && splitWork && !is3D
         ? workStyleLandscape(
             candidates,
             activeClusters,
@@ -723,6 +742,7 @@ export default function Home() {
     [
       mode,
       splitWork,
+      is3D,
       candidates,
       activeClusters,
       workProfiles,
@@ -730,7 +750,34 @@ export default function Home() {
       mapSize.width,
     ],
   );
-  const landscape = splitLandscape ?? baseLandscape;
+  const dimension = useMemo(
+    () =>
+      depthDimension(
+        occupations,
+        workProfiles,
+        depthAxis,
+        percentile,
+        unit,
+        aiMetric,
+      ),
+    [occupations, workProfiles, depthAxis, percentile, unit, aiMetric],
+  );
+  const scene = useMemo(
+    () =>
+      is3D
+        ? cloud3D(
+            baseLandscape.occupations,
+            baseLandscape.clusters,
+            dimension.values,
+            camera,
+            mapSize.width,
+            mapSize.height,
+            !collapsed && mapSize.width > 760 ? 360 : 0,
+          )
+        : null,
+    [is3D, baseLandscape, dimension, camera, mapSize, collapsed],
+  );
+  const landscape = scene ?? splitLandscape ?? baseLandscape;
   const labels = useMemo(
     () =>
       clusterLabels(landscape.clusters, view.k, mapSize.width, mapSize.height),
@@ -756,7 +803,7 @@ export default function Home() {
     [visible],
   );
   const hiddenCount = candidates.length - visible.length;
-  const layoutKey = `${basis}:${focusPaths}:${layout}:${!!splitLandscape}:${splitLandscape ? collapsed : ''}:${mapSize.width}:${mapSize.height}:${visible.map((o) => o.id).join(',')}`;
+  const layoutKey = `${is3D}:${basis}:${focusPaths}:${layout}:${!!splitLandscape}:${splitLandscape ? collapsed : ''}:${mapSize.width}:${mapSize.height}:${visible.map((o) => o.id).join(',')}`;
   const [fittedLayout, setFittedLayout] = useState(layoutKey);
   useEffect(() => {
     mapViewport.current?.scrollTo(0, 0);
@@ -787,6 +834,21 @@ export default function Home() {
   const treeRoleX = treeLeft + 260;
   const treeWidth = Math.max(mapSize.width, treeRoleX + 630);
   const mapOccupations = isTree ? branches.flatMap((b) => b.roles) : visible;
+  const occupationIndices = useMemo(
+    () => new Map(mapOccupations.map((o, i) => [o.id, i])),
+    [mapOccupations],
+  );
+  const paintedOccupations = useMemo(
+    () =>
+      scene
+        ? [...mapOccupations].sort(
+            (a, b) =>
+              scene.points.get(a.id)!.depth - scene.points.get(b.id)!.depth ||
+              a.id.localeCompare(b.id),
+          )
+        : mapOccupations,
+    [mapOccupations, scene],
+  );
   const strongPaths = visible.filter(
     (o) => quality.get(o.id)?.status === 'strong',
   );
@@ -833,6 +895,7 @@ export default function Home() {
     setCluster(null);
     setQuery('');
     setZone(0);
+    setCamera(INITIAL_CAMERA);
     if (mode === 'explore') {
       setExploreIndustries([]);
       setWorkFilter('all');
@@ -1031,6 +1094,54 @@ export default function Home() {
               </TabsList>
             </Tabs>
           )}
+          {!isTree && (
+            <>
+              <Tabs
+                value={threeD ? '3d' : '2d'}
+                onValueChange={(value) => {
+                  setThreeD(value === '3d');
+                  setCamera(INITIAL_CAMERA);
+                  setView({ x: 0, y: 0, k: 1 });
+                }}
+              >
+                <TabsList className="color-switch" aria-label="Map dimensions">
+                  <TabsTrigger value="2d">2D</TabsTrigger>
+                  <TabsTrigger value="3d">
+                    <Box />
+                    3D
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+              {is3D && (
+                <div className="depth-select">
+                  <label htmlFor="depth-axis">Depth</label>
+                  <Select
+                    value={depthAxis}
+                    onValueChange={(v) => setDepthAxis(v as DepthAxis)}
+                  >
+                    <SelectTrigger id="depth-axis" aria-label="Third dimension">
+                      <SelectValue>
+                        {depthAxis === 'work'
+                          ? 'Physical / knowledge work'
+                          : depthAxis === 'pay'
+                            ? 'Pay at selected percentile'
+                            : 'Selected AI index'}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="work">
+                        Physical / knowledge work
+                      </SelectItem>
+                      <SelectItem value="pay">
+                        Pay at selected percentile
+                      </SelectItem>
+                      <SelectItem value="ai">Selected AI index</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </>
+          )}
           <label className="ai-toggle" htmlFor="ai-map-toggle">
             <Switch
               id="ai-map-toggle"
@@ -1110,13 +1221,15 @@ export default function Home() {
           <div className="map-caption">
             {isTree
               ? `${mapOccupations.length} of ${occupations.length} roles · ${mapOccupations.filter((o) => scores.get(o.id)?.score == null).length} unscored · highest fit first within each group · scroll to explore`
-              : splitLandscape
-                ? 'Knowledge-led ← → Physical/manual-led · original subclusters retained'
-                : focusPaths
-                  ? 'Your remaining paths · activity groups resized and repacked to fit'
-                  : basis === 'skills'
-                    ? 'Grouped by skill profiles · nearby roles need similar skills'
-                    : 'Grouped by activities · nearby roles share responsibilities'}
+              : scene
+                ? `3D · ${basis === 'skills' ? 'Skill' : 'Activity'} groups across X/Y · depth: ${dimension.label} · drag to rotate, Shift-drag to pan`
+                : splitLandscape
+                  ? 'Knowledge-led ← → Physical/manual-led · original subclusters retained'
+                  : focusPaths
+                    ? 'Your remaining paths · activity groups resized and repacked to fit'
+                    : basis === 'skills'
+                      ? 'Grouped by skill profiles · nearby roles need similar skills'
+                      : 'Grouped by activities · nearby roles share responsibilities'}
             {!isTree && labels.length < landscape.clusters.length && (
               <span>Zoom for more group labels</span>
             )}
@@ -1751,15 +1864,16 @@ export default function Home() {
               <label className="work-split-toggle" htmlFor="split-work-map">
                 <Switch
                   id="split-work-map"
-                  checked={splitWork}
+                  checked={splitWork && !is3D}
+                  disabled={is3D}
                   onCheckedChange={setSplitWork}
                 />
                 Divide the cloud into two halves
               </label>
               <p className="microcopy">
-                Keep each skill or activity subcluster inside its knowledge-led
-                or physical/manual-led half. Mixed roles sit near the middle of
-                the index.
+                {is3D
+                  ? 'The 3D map uses depth for this comparison. Switch to 2D to divide the cloud into halves.'
+                  : 'Keep each skill or activity subcluster inside its knowledge-led or physical/manual-led half. Mixed roles sit near the middle of the index.'}
               </p>
               <div className="label-value">
                 <label className="field-label" htmlFor="work-filter-direction">
@@ -2177,7 +2291,7 @@ export default function Home() {
         </button>
       )}
       <section
-        className={`map-stage ${isTree ? 'tree-stage' : ''}`}
+        className={`map-stage ${is3D ? 'cloud-3d' : ''} ${isTree ? 'tree-stage' : ''}`}
         aria-label="Interactive occupation map"
       >
         <div className="map-viewport" ref={mapViewport}>
@@ -2211,7 +2325,7 @@ export default function Home() {
                   ? { width: treeWidth * view.k, height: tree.height * view.k }
                   : undefined
               }
-              aria-label="Career map. Use arrow keys between occupations and Enter to inspect."
+              aria-label={`${is3D ? `3D career map. Depth: ${dimension.label}. Drag to rotate or use the rotation buttons.` : 'Career map.'} Use arrow keys between occupations and Enter to inspect.`}
               onPointerDown={(e) => {
                 if (isTree || e.button !== 0) return;
                 drag.current = {
@@ -2219,6 +2333,8 @@ export default function Home() {
                   y: e.clientY,
                   vx: view.x,
                   vy: view.y,
+                  camera,
+                  rotate: is3D && !e.shiftKey,
                 };
                 e.currentTarget.setPointerCapture(e.pointerId);
               }}
@@ -2227,16 +2343,28 @@ export default function Home() {
                 const m = e.currentTarget.getScreenCTM();
                 const scale = m?.a ?? 1;
                 const origin = drag.current;
-                setView((v) => ({
-                  ...v,
-                  x: origin.vx + (e.clientX - origin.x) / scale,
-                  y: origin.vy + (e.clientY - origin.y) / scale,
-                }));
+                if (origin.rotate)
+                  setCamera(
+                    rotateCamera(
+                      origin.camera,
+                      e.clientX - origin.x,
+                      e.clientY - origin.y,
+                    ),
+                  );
+                else
+                  setView((v) => ({
+                    ...v,
+                    x: origin.vx + (e.clientX - origin.x) / scale,
+                    y: origin.vy + (e.clientY - origin.y) / scale,
+                  }));
               }}
               onPointerUp={() => {
                 drag.current = null;
               }}
               onPointerCancel={() => {
+                drag.current = null;
+              }}
+              onLostPointerCapture={() => {
                 drag.current = null;
               }}
             >
@@ -2258,6 +2386,60 @@ export default function Home() {
                     : `translate(${view.x} ${view.y}) scale(${view.k})`
                 }
               >
+                {scene && (
+                  <g className="depth-frame" aria-hidden="true">
+                    {scene.edges.map(([a, b], i) => (
+                      <line
+                        key={i}
+                        x1={point(a).x}
+                        y1={point(a).y}
+                        x2={point(b).x}
+                        y2={point(b).y}
+                        stroke="#63746a"
+                        strokeOpacity={0.2}
+                        strokeWidth={1 / view.k}
+                      />
+                    ))}
+                    <line
+                      x1={point(scene.project({ x: 1, y: 1, z: 0 })).x}
+                      y1={point(scene.project({ x: 1, y: 1, z: 0 })).y}
+                      x2={point(scene.project({ x: 1, y: 1, z: 1 })).x}
+                      y2={point(scene.project({ x: 1, y: 1, z: 1 })).y}
+                      stroke="#32665a"
+                      strokeWidth={2 / view.k}
+                    />
+                    {[0, 1].map((z) => {
+                      const p = point(scene.project({ x: 1, y: 1, z }));
+                      return (
+                        <text
+                          key={z}
+                          x={p.x}
+                          y={p.y + (z ? 24 : -12) / view.k}
+                          textAnchor="middle"
+                          fontSize={14 / view.k}
+                          fill="#203b32"
+                          stroke="#f3f2eb"
+                          strokeWidth={4 / view.k}
+                          paintOrder="stroke"
+                        >
+                          {z ? dimension.high : dimension.low}
+                        </text>
+                      );
+                    })}
+                    {!!scene.unknownCount && (
+                      <text
+                        x={point({ x: 0.62, y: 0.88 }).x}
+                        y={point({ x: 0.62, y: 0.88 }).y}
+                        textAnchor="middle"
+                        fontSize={13 / view.k}
+                        fill="#63746a"
+                      >
+                        {dimension.missing}: {scene.unknownCount} roles ·
+                        separate row
+                      </text>
+                    )}
+                  </g>
+                )}
                 {splitLandscape && (
                   <g className="work-map-halves" aria-hidden="true">
                     <line
@@ -2435,7 +2617,10 @@ export default function Home() {
                     })}
                   </g>
                 )}
-                {mapOccupations.map((o, i) => {
+                {paintedOccupations.map((o) => {
+                  const i = occupationIndices.get(o.id)!;
+                  const nodeScale =
+                    (scene?.points.get(o.id)?.scale ?? 1) / Math.sqrt(view.k);
                   const position = isTree
                     ? { x: treeRoleX, y: tree.positions.get(o.id)! }
                     : point(o);
@@ -2470,7 +2655,7 @@ export default function Home() {
                           ? 0
                           : -1
                       }
-                      aria-label={`${o.title}, ${scores.get(o.id)?.score == null ? 'unscored' : `fit ${score}/100, ${scores.get(o.id)?.coverage}% coverage`}, ${QUALITY[quality.get(o.id)!.status].label}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}${mode === 'explore' ? `, work mix ${workProfiles.get(o.id)?.balance == null ? 'unclassified' : `${workProfiles.get(o.id)!.balance} out of 100, higher means more physical or manual work`}` : ''}${aiOverlay ? `, ${aiLabel(o, aiMetric)}` : ''}`}
+                      aria-label={`${o.title}, ${scores.get(o.id)?.score == null ? 'unscored' : `fit ${score}/100, ${scores.get(o.id)?.coverage}% coverage`}, ${QUALITY[quality.get(o.id)!.status].label}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}${mode === 'explore' ? `, work mix ${workProfiles.get(o.id)?.balance == null ? 'unclassified' : `${workProfiles.get(o.id)!.balance} out of 100, higher means more physical or manual work`}` : ''}${scene ? `, ${dimension.labels.get(o.id)}` : ''}${aiOverlay ? `, ${aiLabel(o, aiMetric)}` : ''}`}
                       className="occupation-node"
                       onFocus={(event) => {
                         setFocusIndex(i);
@@ -2513,6 +2698,7 @@ export default function Home() {
                     >
                       <title>
                         {o.title}
+                        {scene ? ` · ${dimension.labels.get(o.id)}` : ''}
                         {mode === 'explore'
                           ? ` · Work mix ${workProfiles.get(o.id)?.balance == null ? 'unclassified' : `${workProfiles.get(o.id)!.balance}/100`}`
                           : ''}
@@ -2525,7 +2711,7 @@ export default function Home() {
                         <ExposureRing
                           x={p.x}
                           y={p.y}
-                          radius={(isTree ? 10 : 6.8) / Math.sqrt(view.k)}
+                          radius={(isTree ? 10 : 6.8) * nodeScale}
                           value={aiValue(o, aiMetric)}
                           threshold={aiThreshold}
                         />
@@ -2534,7 +2720,7 @@ export default function Home() {
                         <circle
                           cx={p.x}
                           cy={p.y}
-                          r={(active ? 7 : 4.5) / Math.sqrt(view.k)}
+                          r={(active ? 7 : 4.5) * nodeScale}
                           fill={fill}
                           opacity={active ? 0.35 : 0.16}
                           filter="url(#node-glow)"
@@ -2550,11 +2736,11 @@ export default function Home() {
                         className="node-core"
                         cx={p.x}
                         cy={p.y}
-                        r={(active ? 5.5 : 3.1) / Math.sqrt(view.k)}
+                        r={(active ? 5.5 : 3.1) * nodeScale}
                         fill={missingSkills ? 'none' : fill}
                         stroke={missingSkills ? '#737d75' : undefined}
                         strokeWidth={
-                          missingSkills ? 1.5 / Math.sqrt(view.k) : undefined
+                          missingSkills ? 1.5 * nodeScale : undefined
                         }
                         opacity={isTree ? 1 : opacity}
                       />
@@ -2598,7 +2784,7 @@ export default function Home() {
                         <circle
                           cx={p.x}
                           cy={p.y}
-                          r={10 / Math.sqrt(view.k)}
+                          r={10 * nodeScale}
                           fill="none"
                           stroke={fill}
                           strokeWidth={1 / view.k}
@@ -2700,6 +2886,7 @@ export default function Home() {
             {clusterNames[hover.cluster]}
           </div>
           <strong>{hover.title}</strong>
+          {scene && <span>{dimension.labels.get(hover.id)}</span>}
           {mode === 'explore' && (
             <span>
               Work mix:{' '}
@@ -2751,6 +2938,29 @@ export default function Home() {
         </div>
       )}
       <div className="map-controls bubble">
+        {scene && (
+          <>
+            <span>Rotate</span>
+            {(
+              [
+                ['left', ArrowLeft, -35, 0],
+                ['right', ArrowRight, 35, 0],
+                ['up', ArrowUp, 0, -35],
+                ['down', ArrowDown, 0, 35],
+              ] as const
+            ).map(([direction, Icon, dx, dy]) => (
+              <button
+                key={direction}
+                className="icon-button"
+                aria-label={`Rotate 3D view ${direction}`}
+                onClick={() => setCamera((c) => rotateCamera(c, dx, dy))}
+              >
+                <Icon size={18} />
+              </button>
+            ))}
+            <div className="control-divider" />
+          </>
+        )}
         <button
           className="icon-button"
           onClick={() => zoom(1.25)}
@@ -2771,9 +2981,10 @@ export default function Home() {
           className="icon-button"
           onClick={() => {
             setView({ x: 0, y: 0, k: 1 });
+            setCamera(INITIAL_CAMERA);
             mapViewport.current?.scrollTo(0, 0);
           }}
-          aria-label="Reset map position"
+          aria-label={is3D ? 'Reset 3D view' : 'Reset map position'}
         >
           <Scan size={18} />
         </button>
@@ -2927,7 +3138,9 @@ export default function Home() {
         <span>
           {isTree
             ? 'Scroll through all roles · Use +/− to zoom · Click to discover'
-            : 'Scroll to zoom · Drag to explore · Click to discover'}
+            : is3D
+              ? 'Drag to rotate · Shift-drag to pan · Scroll to zoom'
+              : 'Scroll to zoom · Drag to explore · Click to discover'}
         </span>
         <button
           className="mobile-info"
@@ -3954,6 +4167,26 @@ export default function Home() {
           <p>
             {data?.excluded} occupations without task-to-activity mappings are
             excluded from the map.
+          </p>
+          <h3>Explore in three dimensions.</h3>
+          <p>
+            The 2D/3D control adds a measurable depth axis to the existing skill
+            or activity layout. Choose work style (knowledge to
+            physical/manual), pay at the selected percentile and unit, or the
+            selected AI index. Colors, AI rings, and filters remain independent.
+            This extends the existing map; it does not recompute clusters in
+            three dimensions.
+          </p>
+          <p>
+            Work style and AI use fixed 0–100 scales. Pay uses zero to the
+            largest uncensored wage in the complete dataset at the selected
+            percentile, so filtering does not change depth values. Missing depth
+            measurements and top-coded wages appear in a separate row outside
+            the 3D volume, without assuming they are zero. Original group
+            membership and source similarity scores stay unchanged; projected
+            distances are for exploration. Drag to rotate, Shift-drag to pan, or
+            use the rotation and zoom buttons. The possibility tree stays
+            two-dimensional.
           </p>
           <h3>Physical and knowledge work.</h3>
           <p>

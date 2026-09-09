@@ -91,6 +91,186 @@ export function mapPoint(
     y: top + o.y * (height - top - Math.min(100, height * 0.14)),
   };
 }
+export type DepthAxis = 'work' | 'pay' | 'ai';
+export const INITIAL_CAMERA = { yaw: -0.55, pitch: 0.35 };
+export function rotateCamera(
+  camera: typeof INITIAL_CAMERA,
+  dx: number,
+  dy: number,
+) {
+  return {
+    yaw: (camera.yaw + dx * 0.006) % (Math.PI * 2),
+    pitch: Math.max(-1.2, Math.min(1.2, camera.pitch + dy * 0.006)),
+  };
+}
+
+// Reference scales use the complete dataset, so filtering never moves a role along the depth axis.
+export function depthDimension(
+  occupations: Occupation[],
+  work: Map<string, { balance: number | null }>,
+  axis: DepthAxis,
+  percentile: number,
+  unit: 'annual' | 'hourly',
+  aiMetric: AIMetric,
+) {
+  const raw = new Map(
+    occupations.map((o) => {
+      const pay = wageAt(o, percentile, unit);
+      return [
+        o.id,
+        axis === 'work'
+          ? (work.get(o.id)?.balance ?? null)
+          : axis === 'ai'
+            ? aiValue(o, aiMetric)
+            : pay?.capped
+              ? null
+              : (pay?.value ?? null),
+      ] as const;
+    }),
+  );
+  const max =
+    axis === 'work'
+      ? 100
+      : axis === 'ai'
+        ? 1
+        : Math.max(
+            1,
+            ...[...raw.values()].filter((v): v is number => v !== null),
+          );
+  const label =
+    axis === 'work'
+      ? 'Work style'
+      : axis === 'ai'
+        ? AI_SOURCES[aiMetric].name
+        : `Pay · P${PERCENTILES[percentile]} · ${unit}`;
+  return {
+    label,
+    low:
+      axis === 'work'
+        ? 'Knowledge · 0'
+        : axis === 'ai'
+          ? 'AI index · 0'
+          : money({ value: 0, capped: false }, true, unit),
+    high:
+      axis === 'work'
+        ? 'Physical/manual · 100'
+        : axis === 'ai'
+          ? 'AI index · 100'
+          : money({ value: max, capped: false }, true, unit),
+    missing: axis === 'pay' ? 'Missing or top-coded pay' : 'Missing depth data',
+    values: new Map(
+      [...raw].map(([id, v]) => [id, v === null ? null : v / max]),
+    ),
+    labels: new Map(
+      [...raw].map(([id, v]) => [
+        id,
+        v === null
+          ? 'Depth unavailable'
+          : axis === 'pay'
+            ? `${label}: ${money({ value: v, capped: false }, false, unit)}`
+            : `${label}: ${(axis === 'ai' ? v * 100 : v).toFixed(axis === 'ai' ? 1 : 0)}/100`,
+      ]),
+    ),
+  };
+}
+
+// ponytail: perspective SVG is sufficient for 923 roles; use WebGL only if larger datasets outgrow it.
+export function cloud3D(
+  occupations: Occupation[],
+  clusters: Cluster[],
+  values: Map<string, number | null>,
+  camera: typeof INITIAL_CAMERA,
+  width: number,
+  height: number,
+  leftInset = 0,
+) {
+  const inset = Math.max(0, Math.min(width * 0.45, leftInset));
+  const size = Math.max(1, Math.min((width - inset) * 0.62, height * 0.6));
+  const origin = mapPoint({ x: 0, y: 0 }, width, height);
+  const end = mapPoint({ x: 1, y: 1 }, width, height);
+  const cy = Math.cos(camera.yaw),
+    sy = Math.sin(camera.yaw);
+  const cp = Math.cos(camera.pitch),
+    sp = Math.sin(camera.pitch);
+  const project = (p: { x: number; y: number; z: number }) => {
+    const x = p.x - 0.5,
+      y = 0.5 - p.y,
+      z = p.z - 0.5;
+    const rx = x * cy + z * sy,
+      rz = -x * sy + z * cy;
+    const ry = y * cp - rz * sp,
+      depth = y * sp + rz * cp;
+    const scale = 2.8 / (2.8 - depth);
+    return {
+      x:
+        ((inset + width) / 2 + rx * size * scale - origin.x) /
+        Math.max(1, end.x - origin.x),
+      y:
+        (height * 0.46 - ry * size * scale - origin.y) /
+        Math.max(1, end.y - origin.y),
+      depth,
+      scale,
+    };
+  };
+  const unknown = occupations
+    .filter((o) => values.get(o.id) == null)
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const unknownOrder = new Map(unknown.map((o, i) => [o.id, i]));
+  const points = new Map(
+    occupations.map((o) => {
+      const value = values.get(o.id);
+      return [
+        o.id,
+        value == null
+          ? {
+              x:
+                inset / width +
+                ((0.94 - inset / width) * (unknownOrder.get(o.id)! + 0.5)) /
+                  unknown.length,
+              y: 0.94,
+              depth: -Infinity,
+              scale: 1,
+            }
+          : project({ ...o, z: value }),
+      ] as const;
+    }),
+  );
+  const placed = occupations.map((o) => ({
+    ...o,
+    x: points.get(o.id)!.x,
+    y: points.get(o.id)!.y,
+  }));
+  const groups = clusters.flatMap((c) => {
+    const all = placed.filter((o) => o.cluster === c.id);
+    if (!all.length) return [];
+    const measured = all.filter((o) => values.get(o.id) != null);
+    const members = measured.length ? measured : all;
+    return [
+      {
+        ...c,
+        labelBounds: undefined,
+        count: all.length,
+        x: members.reduce((sum, o) => sum + o.x, 0) / members.length,
+        y: members.reduce((sum, o) => sum + o.y, 0) / members.length,
+      },
+    ];
+  });
+  const corners = Array.from({ length: 8 }, (_, i) =>
+    project({ x: i & 1, y: (i >> 1) & 1, z: (i >> 2) & 1 }),
+  );
+  const edges = corners.flatMap((a, i) =>
+    [1, 2, 4].filter((bit) => !(i & bit)).map((bit) => [a, corners[i | bit]]),
+  );
+  return {
+    occupations: placed,
+    clusters: groups,
+    points,
+    edges,
+    project,
+    unknownCount: unknown.length,
+  };
+}
+
 export function clusterLabels(
   clusters: Cluster[],
   zoom: number,
