@@ -2433,6 +2433,50 @@ footer .mobile-info {
 .depth-frame {
   pointer-events: none;
 }
+.field-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  flex: 1 0 100%;
+  gap: 12px;
+  font-size: 14px;
+}
+.field-toolbar [data-slot='select-trigger'] {
+  width: auto;
+  font-size: 14px;
+}
+.field-slider {
+  width: 145px;
+  display: grid;
+  gap: 12px;
+}
+.field-legend {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.field-legend i {
+  width: 95px;
+  height: 8px;
+  border-radius: 4px;
+}
+.field-legend small {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.intensity-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.map-viewport > svg {
+  position: relative;
+}
 .cloud-3d .occupation-node,
 .cloud-3d .occupation-node .node-core,
 .cloud-3d .cluster-label > g {

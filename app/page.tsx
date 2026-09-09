@@ -2,6 +2,8 @@
 /* oxlint-disable jsx-a11y/prefer-tag-over-role -- SVG graph buttons and CSS data meters require explicit ARIA roles. */
 import Link from 'next/link';
 import { observeViewport } from '@/lib/viewport';
+import { IntensityField } from '@/components/intensity-field';
+import { FIELD_PALETTES, type FieldPalette } from '@/lib/intensity-field';
 import {
   useDeferredValue,
   useEffect,
@@ -90,6 +92,7 @@ import {
   possibilityTree,
   clusterLabels,
   cloud3D,
+  mappable3D,
   depthDimension,
   rotateCamera,
   INITIAL_CAMERA,
@@ -448,6 +451,13 @@ export default function Home() {
   const [splitWork, setSplitWork] = useState(false);
   const [threeD, setThreeD] = useState(false);
   const [depthAxis, setDepthAxis] = useState<DepthAxis>('work');
+  const [fieldMode, setFieldMode] = useState<'off' | 'overlay' | 'replace'>(
+    'off',
+  );
+  const [fieldMetric, setFieldMetric] = useState<'pay' | 'ai'>('ai');
+  const [fieldPalette, setFieldPalette] = useState<FieldPalette>('blue-red');
+  const [fieldSmoothing, setFieldSmoothing] = useState(8);
+  const [fieldOpacity, setFieldOpacity] = useState(55);
   const [camera, setCamera] = useState(INITIAL_CAMERA);
   const [workFilter, setWorkFilter] = useState<WorkFilter>('all');
   const [workCutoff, setWorkCutoff] = useState(50);
@@ -636,6 +646,8 @@ export default function Home() {
   const hasProfile = Object.keys(profile).length > 0 || planned !== null;
   const isTree = mode === 'career' && layout === 'tree';
   const is3D = threeD && !isTree;
+  const fieldActive = !isTree && fieldMode !== 'off';
+  const dotsVisible = !fieldActive || fieldMode !== 'replace';
   const hasDetails =
     hasProfile ||
     roles.length > 0 ||
@@ -678,19 +690,55 @@ export default function Home() {
       workCutoff,
     ],
   );
+  const dimension = useMemo(
+    () =>
+      depthDimension(
+        occupations,
+        workProfiles,
+        depthAxis,
+        percentile,
+        unit,
+        aiMetric,
+      ),
+    [occupations, workProfiles, depthAxis, percentile, unit, aiMetric],
+  );
+  const fieldDimension = useMemo(
+    () =>
+      depthDimension(
+        occupations,
+        workProfiles,
+        fieldMetric,
+        percentile,
+        unit,
+        aiMetric,
+      ),
+    [occupations, workProfiles, fieldMetric, percentile, unit, aiMetric],
+  );
+  const mappedMatches = useMemo(
+    () =>
+      is3D
+        ? mappable3D(
+            databaseMatches,
+            dimension.values,
+            fieldActive ? fieldDimension.values : undefined,
+          )
+        : databaseMatches,
+    [is3D, databaseMatches, dimension, fieldActive, fieldDimension],
+  );
+  const incompleteCount = databaseMatches.length - mappedMatches.length;
   const candidates = useMemo(
     () =>
       cluster === null
-        ? databaseMatches
-        : databaseMatches.filter((o) => o.cluster === cluster),
-    [databaseMatches, cluster],
+        ? mappedMatches
+        : mappedMatches.filter((o) => o.cluster === cluster),
+    [mappedMatches, cluster],
   );
   const clusterCounts = useMemo(() => {
     const counts = new Map<number, number>();
-    for (const o of databaseMatches)
+    for (const o of mappedMatches)
       counts.set(o.cluster, (counts.get(o.cluster) ?? 0) + 1);
     return counts;
-  }, [databaseMatches]);
+  }, [mappedMatches]);
   const quality = useMemo(
     () =>
       new Map(
@@ -750,18 +798,6 @@ export default function Home() {
       mapSize.width,
     ],
   );
-  const dimension = useMemo(
-    () =>
-      depthDimension(
-        occupations,
-        workProfiles,
-        depthAxis,
-        percentile,
-        unit,
-        aiMetric,
-      ),
-    [occupations, workProfiles, depthAxis, percentile, unit, aiMetric],
-  );
   const scene = useMemo(
     () =>
       is3D
@@ -778,6 +814,20 @@ export default function Home() {
     [is3D, baseLandscape, dimension, camera, mapSize, collapsed],
   );
   const landscape = scene ?? splitLandscape ?? baseLandscape;
+  const fieldRoles = is3D ? baseLandscape.occupations : landscape.occupations;
+  const fieldSamples = useMemo(
+    () =>
+      fieldActive
+        ? fieldRoles.flatMap((o) => {
+            const value = fieldDimension.values.get(o.id);
+            const z = is3D ? dimension.values.get(o.id) : 0;
+            return value == null || z == null
+              ? []
+              : [{ x: o.x, y: o.y, z, value }];
+          })
+        : [],
+    [fieldActive, fieldRoles, fieldDimension, is3D, dimension],
+  );
   const labels = useMemo(
     () =>
       clusterLabels(landscape.clusters, view.k, mapSize.width, mapSize.height),
@@ -1040,7 +1090,9 @@ export default function Home() {
           </h1>
         </div>
         <div className="map-toolbar">
-          {isTree ? (
+          {!dotsVisible ? (
+            <span>Colors show the selected field</span>
+          ) : isTree ? (
             <span className="tree-color-label">
               Core & branch: path quality
             </span>
@@ -1145,6 +1197,7 @@ export default function Home() {
           <label className="ai-toggle" htmlFor="ai-map-toggle">
             <Switch
               id="ai-map-toggle"
+              disabled={!dotsVisible}
               checked={aiOverlay}
               onCheckedChange={setAiOverlay}
               aria-label="Show AI exposure rings"
@@ -1152,6 +1205,107 @@ export default function Home() {
             AI rings
           </label>
         </div>
+        {!isTree && (
+          <div className="field-toolbar">
+            <span>Intensity field</span>
+            <Tabs
+              value={fieldMode}
+              onValueChange={(v) => setFieldMode(v as typeof fieldMode)}
+            >
+              <TabsList
+                className="color-switch"
+                aria-label="Intensity field display"
+              >
+                <TabsTrigger value="off">Off</TabsTrigger>
+                <TabsTrigger value="overlay">Overlay dots</TabsTrigger>
+                <TabsTrigger value="replace">Field only</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            {fieldActive && (
+              <>
+                <Select
+                  value={fieldMetric}
+                  onValueChange={(v) => setFieldMetric(v as typeof fieldMetric)}
+                >
+                  <SelectTrigger aria-label="Field measure">
+                    <SelectValue>
+                      {fieldMetric === 'pay'
+                        ? 'Pay intensity'
+                        : 'AI impact intensity'}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pay">Pay intensity</SelectItem>
+                    <SelectItem value="ai">AI impact intensity</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={fieldPalette}
+                  onValueChange={(v) => setFieldPalette(v as FieldPalette)}
+                >
+                  <SelectTrigger aria-label="Field color palette">
+                    <SelectValue>
+                      {fieldPalette === 'blue-red'
+                        ? 'Blue → red'
+                        : 'Monochrome'}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="blue-red">Blue → red</SelectItem>
+                    <SelectItem value="monochrome">Monochrome</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="field-slider">
+                  <span id="field-smoothing-label">Smoothing</span>
+                  <Slider
+                    aria-labelledby="field-smoothing-label"
+                    min={3}
+                    max={16}
+                    step={1}
+                    value={[fieldSmoothing]}
+                    onValueChange={(v) =>
+                      setFieldSmoothing(Array.isArray(v) ? v[0] : v)
+                    }
+                  />
+                </div>
+                <div className="field-slider">
+                  <span id="field-opacity-label">
+                    Opacity · {fieldOpacity}%
+                  </span>
+                  <Slider
+                    aria-labelledby="field-opacity-label"
+                    min={15}
+                    max={90}
+                    step={5}
+                    value={[fieldOpacity]}
+                    onValueChange={(v) =>
+                      setFieldOpacity(Array.isArray(v) ? v[0] : v)
+                    }
+                  />
+                </div>
+                <div
+                  className="field-legend"
+                  aria-label={`${fieldDimension.label}, low ${fieldDimension.low}, high ${fieldDimension.high}`}
+                >
+                  <strong>{fieldDimension.label}</strong>
+                  <span>{fieldDimension.low}</span>
+                  <i
+                    style={{
+                      background: `linear-gradient(90deg, ${FIELD_PALETTES[fieldPalette].map((rgb) => `rgb(${rgb.join(',')})`).join(',')})`,
+                    }}
+                  />
+                  <span>{fieldDimension.high}</span>
+                  <small>
+                    Smoothed local averages · fading = less nearby data
+                  </small>
+                  {!fieldSamples.length && (
+                    <span>No measured values for this field.</span>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {isTree && (
           <div className="tree-filters">
             <div className="tree-fit-range">
@@ -1230,10 +1384,16 @@ export default function Home() {
                     : basis === 'skills'
                       ? 'Grouped by skill profiles · nearby roles need similar skills'
                       : 'Grouped by activities · nearby roles share responsibilities'}
+            {is3D && incompleteCount > 0 && (
+              <span>
+                {incompleteCount} roles with incomplete layout, depth, or field
+                data hidden
+              </span>
+            )}
             {!isTree && labels.length < landscape.clusters.length && (
               <span>Zoom for more group labels</span>
             )}
-            {aiOverlay && (
+            {aiOverlay && dotsVisible && (
               <button
                 onClick={() => {
                   setCollapsed(false);
@@ -2295,6 +2455,18 @@ export default function Home() {
         aria-label="Interactive occupation map"
       >
         <div className="map-viewport" ref={mapViewport}>
+          {fieldActive && data && (
+            <IntensityField
+              samples={fieldSamples}
+              scene={scene}
+              width={mapSize.width}
+              height={mapSize.height}
+              view={view}
+              sigma={fieldSmoothing / 100}
+              opacity={fieldOpacity / 100}
+              palette={fieldPalette}
+            />
+          )}
           {error ? (
             <div className="map-message">
               <Info />
@@ -2426,18 +2598,6 @@ export default function Home() {
                         </text>
                       );
                     })}
-                    {!!scene.unknownCount && (
-                      <text
-                        x={point({ x: 0.62, y: 0.88 }).x}
-                        y={point({ x: 0.62, y: 0.88 }).y}
-                        textAnchor="middle"
-                        fontSize={13 / view.k}
-                        fill="#63746a"
-                      >
-                        {dimension.missing}: {scene.unknownCount} roles ·
-                        separate row
-                      </text>
-                    )}
                   </g>
                 )}
                 {splitLandscape && (
@@ -2497,6 +2657,7 @@ export default function Home() {
                 )}
                 <g className="connections" aria-hidden="true">
                   {!isTree &&
+                    dotsVisible &&
                     visible.flatMap((o) =>
                       o.neighbors
                         .slice(0, 2)
@@ -2655,7 +2816,7 @@ export default function Home() {
                           ? 0
                           : -1
                       }
-                      aria-label={`${o.title}, ${scores.get(o.id)?.score == null ? 'unscored' : `fit ${score}/100, ${scores.get(o.id)?.coverage}% coverage`}, ${QUALITY[quality.get(o.id)!.status].label}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}${mode === 'explore' ? `, work mix ${workProfiles.get(o.id)?.balance == null ? 'unclassified' : `${workProfiles.get(o.id)!.balance} out of 100, higher means more physical or manual work`}` : ''}${scene ? `, ${dimension.labels.get(o.id)}` : ''}${aiOverlay ? `, ${aiLabel(o, aiMetric)}` : ''}`}
+                      aria-label={`${o.title}, ${scores.get(o.id)?.score == null ? 'unscored' : `fit ${score}/100, ${scores.get(o.id)?.coverage}% coverage`}, ${QUALITY[quality.get(o.id)!.status].label}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}${mode === 'explore' ? `, work mix ${workProfiles.get(o.id)?.balance == null ? 'unclassified' : `${workProfiles.get(o.id)!.balance} out of 100, higher means more physical or manual work`}` : ''}${fieldActive ? `, field ${fieldDimension.labels.get(o.id)}` : ''}${scene ? `, ${dimension.labels.get(o.id)}` : ''}${aiOverlay ? `, ${aiLabel(o, aiMetric)}` : ''}`}
                       className="occupation-node"
                       onFocus={(event) => {
                         setFocusIndex(i);
@@ -2707,7 +2868,7 @@ export default function Home() {
                           : ''}
                         {aiOverlay ? ` · ${aiLabel(o, aiMetric)}` : ''}
                       </title>
-                      {aiOverlay && (
+                      {aiOverlay && dotsVisible && (
                         <ExposureRing
                           x={p.x}
                           y={p.y}
@@ -2716,7 +2877,7 @@ export default function Home() {
                           threshold={aiThreshold}
                         />
                       )}
-                      {(active || (bright && score >= 90)) && (
+                      {dotsVisible && (active || (bright && score >= 90)) && (
                         <circle
                           cx={p.x}
                           cy={p.y}
@@ -2742,7 +2903,7 @@ export default function Home() {
                         strokeWidth={
                           missingSkills ? 1.5 * nodeScale : undefined
                         }
-                        opacity={isTree ? 1 : opacity}
+                        opacity={dotsVisible ? (isTree ? 1 : opacity) : 0}
                       />
                       {isTree && (
                         <>
@@ -2844,6 +3005,14 @@ export default function Home() {
           )}
           {!visible.length && data && (
             <div className="map-empty">
+              {is3D && (
+                <p>
+                  Only roles with complete layout, depth, and active field data
+                  can appear in 3D. Change the measure or{' '}
+                  <button onClick={() => setThreeD(false)}>switch to 2D</button>
+                  .
+                </p>
+              )}
               {isTree
                 ? 'No roles match your current guardrails and filters. Adjust your minimum fit, pay target, or other guardrails.'
                 : focusPaths
@@ -2887,6 +3056,9 @@ export default function Home() {
           </div>
           <strong>{hover.title}</strong>
           {scene && <span>{dimension.labels.get(hover.id)}</span>}
+          {fieldActive && (
+            <span>Field: {fieldDimension.labels.get(hover.id)}</span>
+          )}
           {mode === 'explore' && (
             <span>
               Work mix:{' '}
@@ -3066,7 +3238,11 @@ export default function Home() {
         </CollapsibleContent>
       </Collapsible>
       <div className="map-legend">
-        {color === 'quality' || isTree ? (
+        {!dotsVisible ? (
+          <span>
+            Field only · hover or focus a role to inspect its measured value
+          </span>
+        ) : color === 'quality' || isTree ? (
           Object.entries(QUALITY)
             .filter(([key]) => !(focusPaths || isTree) || key !== 'below')
             .map(([key, q]) => (
@@ -3113,10 +3289,10 @@ export default function Home() {
               : 'Shared responsibilities'}
           </>
         )}
-        {mode === 'explore' && basis === 'skills' && (
+        {dotsVisible && !is3D && mode === 'explore' && basis === 'skills' && (
           <span>Hollow center = no reported skill data</span>
         )}
-        {aiOverlay && (
+        {aiOverlay && dotsVisible && (
           <span className="ai-legend">
             <i />
             Red arc = AI index · dashed = unavailable
@@ -4180,13 +4356,33 @@ export default function Home() {
           <p>
             Work style and AI use fixed 0–100 scales. Pay uses zero to the
             largest uncensored wage in the complete dataset at the selected
-            percentile, so filtering does not change depth values. Missing depth
-            measurements and top-coded wages appear in a separate row outside
-            the 3D volume, without assuming they are zero. Original group
-            membership and source similarity scores stay unchanged; projected
-            distances are for exploration. Drag to rotate, Shift-drag to pan, or
-            use the rotation and zoom buttons. The possibility tree stays
-            two-dimensional.
+            percentile, so filtering does not change depth values. The 3D view
+            hides roles with imputed layout measurements, missing depth values,
+            or missing values for an active field. Top-coded wages cannot supply
+            a precise pay depth or field value. Original group membership and
+            source similarity scores stay unchanged; projected distances are for
+            exploration. Drag to rotate, Shift-drag to pan, or use the rotation
+            and zoom buttons. The possibility tree stays two-dimensional.
+          </p>
+          <h3>Smooth intensity fields.</h3>
+          <p>
+            Pay or AI can form a continuous field behind the dots, or replace
+            the dots and their rings. Blue-to-red is the default palette;
+            monochrome runs from light to dark. The legend shows the selected
+            percentile, pay unit, or AI index. Smoothing blends neighboring
+            measurements using distance-weighted averages. Color represents the
+            average value; fading indicates less nearby data. This is an
+            exploratory interpolation, not a prediction of pay or job loss
+            between occupations.
+          </p>
+          <p>
+            In 2D, a smooth background image uses the current map coordinates.
+            In 3D, translucent overlapping samples form a field in the same
+            X/Y/depth space and rotate with the cloud. Smoothing controls the
+            neighborhood size; opacity controls transparency. Missing and
+            top-coded measurements never contribute a zero. Active 3D fields
+            exclude roles without complete layout, depth, and field
+            measurements.
           </p>
           <h3>Physical and knowledge work.</h3>
           <p>

@@ -174,6 +174,24 @@ export function depthDimension(
   };
 }
 
+// Only measured coordinates and active dimensions belong in the 3D scene.
+export function mappable3D(
+  occupations: Occupation[],
+  values: Map<string, number | null>,
+  field?: Map<string, number | null>,
+) {
+  const measured = (v: number | null | undefined) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
+  return occupations.filter(
+    (o) =>
+      Number.isFinite(o.x) &&
+      Number.isFinite(o.y) &&
+      !o.imputedMeasurements &&
+      measured(values.get(o.id)) &&
+      (!field || measured(field.get(o.id))),
+  );
+}
+
 // ponytail: perspective SVG is sufficient for 923 roles; use WebGL only if larger datasets outgrow it.
 export function cloud3D(
   occupations: Occupation[],
@@ -212,30 +230,11 @@ export function cloud3D(
       scale,
     };
   };
-  const unknown = occupations
-    .filter((o) => values.get(o.id) == null)
-    .sort((a, b) => a.id.localeCompare(b.id));
-  const unknownOrder = new Map(unknown.map((o, i) => [o.id, i]));
+  const mapped = mappable3D(occupations, values);
   const points = new Map(
-    occupations.map((o) => {
-      const value = values.get(o.id);
-      return [
-        o.id,
-        value == null
-          ? {
-              x:
-                inset / width +
-                ((0.94 - inset / width) * (unknownOrder.get(o.id)! + 0.5)) /
-                  unknown.length,
-              y: 0.94,
-              depth: -Infinity,
-              scale: 1,
-            }
-          : project({ ...o, z: value }),
-      ] as const;
-    }),
+    mapped.map((o) => [o.id, project({ ...o, z: values.get(o.id)! })]),
   );
-  const placed = occupations.map((o) => ({
+  const placed = mapped.map((o) => ({
     ...o,
     x: points.get(o.id)!.x,
     y: points.get(o.id)!.y,
@@ -243,8 +242,7 @@ export function cloud3D(
   const groups = clusters.flatMap((c) => {
     const all = placed.filter((o) => o.cluster === c.id);
     if (!all.length) return [];
-    const measured = all.filter((o) => values.get(o.id) != null);
-    const members = measured.length ? measured : all;
+    const members = all;
     return [
       {
         ...c,
@@ -267,7 +265,8 @@ export function cloud3D(
     points,
     edges,
     project,
-    unknownCount: unknown.length,
+    worldScale: size,
+    excludedCount: occupations.length - mapped.length,
   };
 }
 

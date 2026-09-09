@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { observeViewport } from '../lib/viewport.ts';
+import { intensityField, fieldColor } from '../lib/intensity-field.ts';
 import {
   workStyles,
   matchesWorkStyle,
@@ -25,6 +26,7 @@ import {
   possibilityTree,
   clusterLabels,
   cloud3D,
+  mappable3D,
   depthDimension,
   rotateCamera,
   INITIAL_CAMERA,
@@ -194,22 +196,23 @@ const d = JSON.parse(
             height,
             inset,
           );
+          const mapped = roles.filter(
+            (o) =>
+              !o.imputedMeasurements && dimension.values.get(o.id) !== null,
+          );
           assert.deepEqual(
             scene.occupations.map((o) => o.id),
-            roles.map((o) => o.id),
+            mapped.map((o) => o.id),
           );
           assert.equal(scene.edges.length, 12);
           assert.equal(
             scene.clusters.reduce((sum, c) => sum + c.count, 0),
-            roles.length,
+            mapped.length,
           );
-          assert.equal(
-            scene.unknownCount,
-            roles.filter((o) => dimension.values.get(o.id) === null).length,
-          );
+          assert.equal(scene.excludedCount, roles.length - mapped.length);
           for (const [i, o] of scene.occupations.entries()) {
-            assert.equal(o.cluster, roles[i].cluster);
-            assert.equal(o.neighbors, roles[i].neighbors);
+            assert.equal(o.cluster, mapped[i].cluster);
+            assert.equal(o.neighbors, mapped[i].neighbors);
             const point = mapPoint(o, width, height);
             assert(Number.isFinite(point.x) && Number.isFinite(point.y));
             assert(
@@ -221,9 +224,7 @@ const d = JSON.parse(
             assert(scene.points.get(o.id).scale > 0);
           }
           // Filtering a measured role set cannot shift its coordinate or depth scale.
-          const subset = roles
-            .filter((o) => dimension.values.get(o.id) !== null)
-            .slice(0, 10);
+          const subset = mapped.slice(0, 10);
           const filtered = cloud3D(
             subset,
             groups,
@@ -249,7 +250,7 @@ const d = JSON.parse(
   const empty = cloud3D([], [], new Map(), INITIAL_CAMERA, 1200, 800);
   assert.deepEqual(empty.occupations, []);
   assert.deepEqual(empty.clusters, []);
-  assert.equal(empty.unknownCount, 0);
+  assert.equal(empty.excludedCount, 0);
   // Identical X/Y with different Z must have distinct depth and projected positions.
   const a = empty.project({ x: 0.6, y: 0.6, z: 0 });
   const b = empty.project({ x: 0.6, y: 0.6, z: 1 });
@@ -321,6 +322,117 @@ const d = JSON.parse(
   }
   console.log(
     `3D projection + labels: ${((performance.now() - started) / 60).toFixed(1)}ms/frame for ${d.occupations.length} roles (excludes browser paint).`,
+  );
+}
+// Fields encode a continuous local average, not discrete groups or occupation density.
+{
+  const samples = [
+    { x: 0.4, y: 0.5, z: 0.5, value: 0 },
+    { x: 0.6, y: 0.5, z: 0.5, value: 1 },
+  ];
+  for (const dimensions of [2, 3]) {
+    const field = intensityField(samples, dimensions, 0.08);
+    assert(
+      field.cells.length > 0 && field.cells.length < field.size ** dimensions,
+    );
+    assert(
+      field.cells.every(
+        (c) => c.value >= 0 && c.value <= 1 && c.support > 0 && c.support <= 1,
+      ),
+    );
+    const distance = (c) =>
+      Math.hypot(c.x - 0.5, c.y - 0.5, dimensions === 3 ? c.z - 0.5 : 0);
+    const middle = field.cells.toSorted((a, b) => distance(a) - distance(b))[0];
+    assert(middle.value > 0.2 && middle.value < 0.8); // A blended color exists between endpoint values.
+    const zeros = intensityField(
+      samples.map((s) => ({ ...s, value: 0 })),
+      dimensions,
+      0.08,
+    );
+    assert(zeros.cells.length > 0 && zeros.cells.every((c) => c.value === 0));
+    const uniform = intensityField(
+      samples.map((s) => ({ ...s, value: 0.7 })),
+      dimensions,
+      0.08,
+    );
+    assert(uniform.cells.every((c) => Math.abs(c.value - 0.7) < 1e-5));
+    const doubled = intensityField([...samples, ...samples], dimensions, 0.08);
+    const duplicateValues = new Map(
+      doubled.cells.map((c) => [c.index, c.value]),
+    );
+    assert(
+      field.cells.every(
+        (c) => Math.abs(c.value - duplicateValues.get(c.index)) < 1e-5,
+      ),
+    );
+    const wider = intensityField(samples, dimensions, 0.15);
+    assert(wider.cells.length > field.cells.length);
+    assert.deepEqual(intensityField([], dimensions, 0.08).cells, []);
+    assert.deepEqual(
+      intensityField([{ x: NaN, y: 0.5, z: 0.5, value: 0.4 }], dimensions, 0.08)
+        .cells,
+      [],
+    );
+  }
+  assert(fieldColor(0, 'blue-red')[2] > fieldColor(0, 'blue-red')[0]);
+  assert(fieldColor(1, 'blue-red')[0] > fieldColor(1, 'blue-red')[2]);
+  assert.notDeepEqual(
+    fieldColor(0.48, 'blue-red'),
+    fieldColor(0.52, 'blue-red'),
+  );
+  for (const v of [0, 0.5, 1])
+    assert.equal(new Set(fieldColor(v, 'monochrome')).size, 1);
+  const layout = occupationLayout(d, 'skills');
+  const work = workStyles(d);
+  const depth = depthDimension(
+    d.occupations,
+    work,
+    'work',
+    2,
+    'annual',
+    'observed',
+  );
+  const measure = depthDimension(
+    d.occupations,
+    work,
+    'ai',
+    2,
+    'annual',
+    'observed',
+  );
+  const clean = mappable3D(layout, depth.values, measure.values);
+  assert(clean.length > 0 && clean.length < layout.length);
+  assert(
+    clean.every(
+      (o) =>
+        !o.imputedMeasurements &&
+        depth.values.get(o.id) !== null &&
+        measure.values.get(o.id) !== null,
+    ),
+  );
+  const base = { ...layout[0], imputedMeasurements: 0 };
+  const zeros = new Map([[base.id, 0]]);
+  assert.deepEqual(mappable3D([base], zeros, zeros), [base]);
+  assert.deepEqual(mappable3D([base], zeros, new Map()), []);
+  assert.deepEqual(
+    mappable3D([{ ...base, imputedMeasurements: 1 }], zeros),
+    [],
+  );
+  assert.deepEqual(mappable3D([{ ...base, x: NaN }], zeros), []);
+  const invalid = new Map([[base.id, NaN]]);
+  assert.deepEqual(mappable3D([base], invalid), []);
+  const started = performance.now();
+  const field = intensityField(
+    clean.map((o) => ({
+      ...o,
+      z: depth.values.get(o.id),
+      value: measure.values.get(o.id),
+    })),
+    3,
+    0.08,
+  );
+  console.log(
+    `3D field: ${clean.length} measured roles → ${field.cells.length} samples in ${(performance.now() - started).toFixed(0)}ms; recalculated only when data or smoothing changes.`,
   );
 }
 // Resize delivery must not synchronously resize the observed layout again.
