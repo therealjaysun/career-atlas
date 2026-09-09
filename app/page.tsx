@@ -912,6 +912,32 @@ export default function Home() {
             AI rings
           </label>
         </div>
+        {data && (
+          <div className="map-caption">
+            {isTree
+              ? `${mapOccupations.length} example paths across ${branches.length} clusters · grouping, not a hiring forecast`
+              : focusPaths
+                ? 'Your remaining paths · activity groups resized and repacked to fit'
+                : basis === 'skills'
+                  ? 'Grouped by skill profiles · nearby roles need similar skills'
+                  : 'Grouped by activities · nearby roles share responsibilities'}
+            {!isTree && labels.length < landscape.clusters.length && (
+              <span>Zoom for more group labels</span>
+            )}
+            {aiOverlay && (
+              <button
+                onClick={() => {
+                  setCollapsed(false);
+                  setPhase(6);
+                }}
+              >
+                <ShieldAlert size={12} />
+                {AI_SOURCES[aiMetric].name} · red arcs
+                <ChevronRight size={12} />
+              </button>
+            )}
+          </div>
+        )}
       </div>
       <aside
         className={`floating-panel ${collapsed ? 'collapsed' : ''}`}
@@ -1759,32 +1785,6 @@ export default function Home() {
         className={`map-stage ${isTree ? 'tree-stage' : ''}`}
         aria-label="Interactive occupation map"
       >
-        {data && (
-          <div className="map-caption">
-            {isTree
-              ? `${mapOccupations.length} example paths across ${branches.length} clusters · grouping, not a hiring forecast`
-              : focusPaths
-                ? 'Your remaining paths · activity groups resized and repacked to fit'
-                : basis === 'skills'
-                  ? 'Grouped by skill profiles · nearby roles need similar skills'
-                  : 'Grouped by activities · nearby roles share responsibilities'}
-            {!isTree && labels.length < landscape.clusters.length && (
-              <span>Zoom for more group labels</span>
-            )}
-            {aiOverlay && (
-              <button
-                onClick={() => {
-                  setCollapsed(false);
-                  setPhase(6);
-                }}
-              >
-                <ShieldAlert size={12} />
-                {AI_SOURCES[aiMetric].name} · red arcs
-                <ChevronRight size={12} />
-              </button>
-            )}
-          </div>
-        )}
         <div className="map-viewport" ref={mapViewport}>
           {error ? (
             <div className="map-message">
