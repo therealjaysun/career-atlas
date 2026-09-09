@@ -271,8 +271,45 @@ const d = JSON.parse(
     800,
   );
   assert.notDeepEqual(rotated.project({ x: 0.6, y: 0.6, z: 1 }), b);
-  assert.equal(rotateCamera(INITIAL_CAMERA, 0, 10000).pitch, 1.2);
-  assert.equal(rotateCamera(INITIAL_CAMERA, 0, -10000).pitch, -1.2);
+  const identity = { x: 0, y: 0, z: 0, w: 1 };
+  const probe = { x: 0.7, y: 0.25, z: 0.6 };
+  const projectWith = (camera) =>
+    cloud3D([], [], new Map(), camera, 1200, 800).project(probe);
+  const sameProjection = (a, b) => {
+    for (const key of ['x', 'y', 'depth', 'scale'])
+      assert(Math.abs(a[key] - b[key]) < 1e-10);
+  };
+  // Each axis can pass through a complete revolution, including roll and upside-down tilt.
+  for (const axis of [0, 1, 2]) {
+    const motion = [0, 0, 0];
+    motion[axis] = (Math.PI * 2) / 0.006;
+    sameProjection(
+      projectWith(rotateCamera(INITIAL_CAMERA, ...motion)),
+      projectWith(INITIAL_CAMERA),
+    );
+  }
+  const upright = projectWith(identity);
+  const upsideDown = projectWith(rotateCamera(identity, 0, Math.PI / 0.006));
+  assert(upsideDown.y > upright.y);
+  const rolled = projectWith(rotateCamera(identity, 0, 0, Math.PI / 0.006));
+  assert(rolled.x < upright.x && rolled.y > upright.y);
+  assert.notDeepEqual(
+    projectWith(rotateCamera(identity, 0, 400)),
+    projectWith(rotateCamera(identity, 0, 500)),
+  );
+  const motion = [123, -87, 41];
+  const turned = rotateCamera(INITIAL_CAMERA, ...motion);
+  sameProjection(
+    projectWith(rotateCamera(turned, ...motion.map((v) => -v))),
+    projectWith(INITIAL_CAMERA),
+  );
+  assert.equal(rotateCamera(INITIAL_CAMERA, 0, 0), INITIAL_CAMERA);
+  let camera = INITIAL_CAMERA;
+  for (let i = 0; i < 2000; i++) camera = rotateCamera(camera, 12, -9, 5);
+  assert(
+    Math.abs(Math.hypot(camera.x, camera.y, camera.z, camera.w) - 1) < 1e-12,
+  );
+  assert(Object.values(projectWith(camera)).every(Number.isFinite));
   const fake = [
     {
       id: 'zero',
@@ -426,10 +463,10 @@ const d = JSON.parse(
       'applicability',
     );
     assert.notDeepEqual(fieldQuartiles(changed.values.values()), quartiles);
-    for (const palette of ['blue-red', 'monochrome'])
+    for (const direction of ['pay', 'ai'])
       assert.deepEqual(
-        fieldColor(iqrColorValue(quartiles.median, quartiles), palette),
-        fieldColor(0.5, palette),
+        fieldColor(iqrColorValue(quartiles.median, quartiles), direction),
+        fieldColor(0.5, direction),
       );
   }
 }
@@ -483,14 +520,13 @@ const d = JSON.parse(
       [],
     );
   }
-  assert(fieldColor(0, 'blue-red')[2] > fieldColor(0, 'blue-red')[0]);
-  assert(fieldColor(1, 'blue-red')[0] > fieldColor(1, 'blue-red')[2]);
-  assert.notDeepEqual(
-    fieldColor(0.48, 'blue-red'),
-    fieldColor(0.52, 'blue-red'),
-  );
-  for (const v of [0, 0.5, 1])
-    assert.equal(new Set(fieldColor(v, 'monochrome')).size, 1);
+  assert(fieldColor(0, 'ai')[2] > fieldColor(0, 'ai')[0]);
+  assert(fieldColor(1, 'ai')[0] > fieldColor(1, 'ai')[2]);
+  assert.notDeepEqual(fieldColor(0.48, 'ai'), fieldColor(0.52, 'ai'));
+  assert(fieldColor(1, 'pay')[2] > fieldColor(1, 'pay')[0]);
+  assert(fieldColor(0, 'pay')[0] > fieldColor(0, 'pay')[2]);
+  for (const v of [0, 0.25, 0.5, 0.75, 1])
+    assert.deepEqual(fieldColor(v, 'pay'), fieldColor(1 - v, 'ai'));
   const layout = occupationLayout(d, 'skills');
   const work = workStyles(d);
   const depth = depthDimension(

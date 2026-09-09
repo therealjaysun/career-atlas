@@ -4,11 +4,9 @@ import Link from 'next/link';
 import { observeViewport } from '@/lib/viewport';
 import { IntensityField } from '@/components/intensity-field';
 import {
-  FIELD_PALETTES,
   fieldQuartiles,
   fieldColor,
   iqrColorValue,
-  type FieldPalette,
 } from '@/lib/intensity-field';
 import {
   useDeferredValue,
@@ -26,6 +24,8 @@ import {
   ArrowUp,
   ArrowDown,
   Box,
+  RotateCcw,
+  RotateCw,
   Check,
   ChevronDown,
   ChevronRight,
@@ -461,7 +461,6 @@ export default function Home() {
     'off',
   );
   const [fieldMetric, setFieldMetric] = useState<'pay' | 'ai'>('ai');
-  const [fieldPalette, setFieldPalette] = useState<FieldPalette>('blue-red');
   const [fieldSmoothing, setFieldSmoothing] = useState(8);
   const [fieldOpacity, setFieldOpacity] = useState(55);
   const [camera, setCamera] = useState(INITIAL_CAMERA);
@@ -501,6 +500,7 @@ export default function Home() {
       vy: number;
       camera: typeof INITIAL_CAMERA;
       rotate: boolean;
+      roll: boolean;
     } | null>(null);
   useEffect(() => {
     const c = new AbortController();
@@ -1253,22 +1253,6 @@ export default function Home() {
                     <SelectItem value="ai">AI impact intensity</SelectItem>
                   </SelectContent>
                 </Select>
-                <Select
-                  value={fieldPalette}
-                  onValueChange={(v) => setFieldPalette(v as FieldPalette)}
-                >
-                  <SelectTrigger aria-label="Field color palette">
-                    <SelectValue>
-                      {fieldPalette === 'blue-red'
-                        ? 'Blue → red'
-                        : 'Monochrome'}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="blue-red">Blue → red</SelectItem>
-                    <SelectItem value="monochrome">Monochrome</SelectItem>
-                  </SelectContent>
-                </Select>
                 <div className="field-slider">
                   <span id="field-smoothing-label">Smoothing</span>
                   <Slider
@@ -1306,8 +1290,8 @@ export default function Home() {
                     style={{
                       background:
                         fieldScale?.q1 === fieldScale?.q3
-                          ? `rgb(${fieldColor(0.5, fieldPalette).join(',')})`
-                          : `linear-gradient(90deg, ${FIELD_PALETTES[fieldPalette].map((rgb) => `rgb(${rgb.join(',')})`).join(',')})`,
+                          ? `rgb(${fieldColor(0.5, fieldMetric).join(',')})`
+                          : `linear-gradient(90deg, ${[0, 0.5, 1].map((v) => `rgb(${fieldColor(v, fieldMetric).join(',')})`).join(',')})`,
                     }}
                   />
                   {fieldScale &&
@@ -1322,14 +1306,17 @@ export default function Home() {
                         <i
                           aria-hidden="true"
                           style={{
-                            background: `rgb(${fieldColor(iqrColorValue(value, fieldScale), fieldPalette).join(',')})`,
+                            background: `rgb(${fieldColor(iqrColorValue(value, fieldScale), fieldMetric).join(',')})`,
                           }}
                         />
                         {label}: {fieldQuartileLabel(value)}
                       </span>
                     ))}
                   <small>
-                    Quartiles across occupations · fading = less nearby data
+                    {fieldMetric === 'pay'
+                      ? 'Blue = higher pay · red = lower pay'
+                      : 'Blue = lower AI impact · red = higher AI impact'}{' '}
+                    · quartiles across occupations
                   </small>
                   {!fieldSamples.length && (
                     <span>No measured values for this field.</span>
@@ -1409,7 +1396,7 @@ export default function Home() {
             {isTree
               ? `${mapOccupations.length} of ${occupations.length} roles · ${mapOccupations.filter((o) => scores.get(o.id)?.score == null).length} unscored · highest fit first within each group · scroll to explore`
               : scene
-                ? `3D · ${basis === 'skills' ? 'Skill' : 'Activity'} groups across X/Y · depth: ${dimension.label} · drag to rotate, Shift-drag to pan`
+                ? `3D · ${basis === 'skills' ? 'Skill' : 'Activity'} groups across X/Y · depth: ${dimension.label} · drag to rotate freely, Alt/Option-drag to roll`
                 : splitLandscape
                   ? 'Knowledge-led ← → Physical/manual-led · original subclusters retained'
                   : focusPaths
@@ -2497,7 +2484,7 @@ export default function Home() {
               view={view}
               sigma={fieldSmoothing / 100}
               opacity={fieldOpacity / 100}
-              palette={fieldPalette}
+              metric={fieldMetric}
               quartiles={fieldScale}
             />
           )}
@@ -2531,7 +2518,7 @@ export default function Home() {
                   ? { width: treeWidth * view.k, height: tree.height * view.k }
                   : undefined
               }
-              aria-label={`${is3D ? `3D career map. Depth: ${dimension.label}. Drag to rotate or use the rotation buttons.` : 'Career map.'} Use arrow keys between occupations and Enter to inspect.`}
+              aria-label={`${is3D ? `3D career map. Depth: ${dimension.label}. Drag to rotate freely, Alt or Option-drag to roll, or use the rotation buttons.` : 'Career map.'} Use arrow keys between occupations and Enter to inspect.`}
               onPointerDown={(e) => {
                 if (isTree || e.button !== 0) return;
                 drag.current = {
@@ -2541,6 +2528,7 @@ export default function Home() {
                   vy: view.y,
                   camera,
                   rotate: is3D && !e.shiftKey,
+                  roll: is3D && e.altKey && !e.shiftKey,
                 };
                 e.currentTarget.setPointerCapture(e.pointerId);
               }}
@@ -2553,8 +2541,9 @@ export default function Home() {
                   setCamera(
                     rotateCamera(
                       origin.camera,
-                      e.clientX - origin.x,
-                      e.clientY - origin.y,
+                      origin.roll ? 0 : e.clientX - origin.x,
+                      origin.roll ? 0 : e.clientY - origin.y,
+                      origin.roll ? origin.x - e.clientX : 0,
                     ),
                   );
                 else
@@ -3149,17 +3138,19 @@ export default function Home() {
             <span>Rotate</span>
             {(
               [
-                ['left', ArrowLeft, -35, 0],
-                ['right', ArrowRight, 35, 0],
-                ['up', ArrowUp, 0, -35],
-                ['down', ArrowDown, 0, 35],
+                ['left', ArrowLeft, -35, 0, 0],
+                ['right', ArrowRight, 35, 0, 0],
+                ['up', ArrowUp, 0, -35, 0],
+                ['down', ArrowDown, 0, 35, 0],
+                ['counterclockwise', RotateCcw, 0, 0, 35],
+                ['clockwise', RotateCw, 0, 0, -35],
               ] as const
-            ).map(([direction, Icon, dx, dy]) => (
+            ).map(([direction, Icon, dx, dy, roll]) => (
               <button
                 key={direction}
                 className="icon-button"
                 aria-label={`Rotate 3D view ${direction}`}
-                onClick={() => setCamera((c) => rotateCamera(c, dx, dy))}
+                onClick={() => setCamera((c) => rotateCamera(c, dx, dy, roll))}
               >
                 <Icon size={18} />
               </button>
@@ -3349,7 +3340,7 @@ export default function Home() {
           {isTree
             ? 'Scroll through all roles · Use +/− to zoom · Click to discover'
             : is3D
-              ? 'Drag to rotate · Shift-drag to pan · Scroll to zoom'
+              ? 'Drag to rotate · Alt/Option-drag to roll · Shift-drag to pan'
               : 'Scroll to zoom · Drag to explore · Click to discover'}
         </span>
         <button
@@ -4395,25 +4386,28 @@ export default function Home() {
             or missing values for an active field. Top-coded wages cannot supply
             a precise pay depth or field value. Original group membership and
             source similarity scores stay unchanged; projected distances are for
-            exploration. Drag to rotate, Shift-drag to pan, or use the rotation
-            and zoom buttons. The possibility tree stays two-dimensional.
+            exploration. Drag to rotate freely through every orientation, use
+            Alt/Option-drag to roll, or Shift-drag to pan. Rotation and roll
+            buttons also work with keyboard and touch. Reset restores the
+            starting view. The possibility tree stays two-dimensional.
           </p>
           <h3>Smooth intensity fields.</h3>
           <p>
             Pay or AI can form a continuous field behind the dots, or replace
-            the dots and their rings. Blue-to-red is the default palette;
-            monochrome runs from light to dark. The legend shows the selected
-            percentile, pay unit, or AI index. Smoothing blends neighboring
-            measurements using distance-weighted averages. Color represents the
-            average value; fading indicates less nearby data. Colors use the
-            interquartile range: the 25th percentile anchors the low color, the
-            median anchors the midpoint, and the 75th anchors the high color.
-            Smooth nonlinear transitions emphasize this middle range; values
-            outside it saturate. Quartiles compare all measured occupations at
-            the selected wage percentile/unit or AI index, so filtering does not
-            move the scale. Tied values share a color; a constant distribution
-            stays neutral. This is an exploratory interpolation, not a
-            prediction of pay or job loss between occupations.
+            the dots and their rings. Blue represents higher pay or lower AI
+            impact; red represents lower pay or higher AI impact. The legend
+            shows the selected percentile, pay unit, or AI index. Smoothing
+            blends neighboring measurements using distance-weighted averages.
+            Color represents the average value; fading indicates less nearby
+            data. Colors use the interquartile range: the 25th percentile
+            anchors the low color, the median anchors the midpoint, and the 75th
+            anchors the high color. Smooth nonlinear transitions emphasize this
+            middle range; values outside it saturate. Quartiles compare all
+            measured occupations at the selected wage percentile/unit or AI
+            index, so filtering does not move the scale. Tied values share a
+            color; a constant distribution stays neutral. This is an exploratory
+            interpolation, not a prediction of pay or job loss between
+            occupations.
           </p>
           <p>
             In 2D, a smooth background image uses the current map coordinates.

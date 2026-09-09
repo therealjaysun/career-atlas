@@ -7,7 +7,6 @@ import {
   iqrColorValue,
   intensityField,
   type FieldQuartiles,
-  type FieldPalette,
   type FieldSample,
 } from '@/lib/intensity-field';
 
@@ -19,7 +18,7 @@ export const IntensityField = memo(function IntensityField({
   view,
   sigma,
   opacity,
-  palette,
+  metric,
   quartiles,
 }: {
   samples: FieldSample[];
@@ -29,7 +28,7 @@ export const IntensityField = memo(function IntensityField({
   view: { x: number; y: number; k: number };
   sigma: number;
   opacity: number;
-  palette: FieldPalette;
+  metric: 'pay' | 'ai';
   quartiles: FieldQuartiles;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -48,7 +47,7 @@ export const IntensityField = memo(function IntensityField({
     if (!ctx) return null;
     if (is3D) {
       for (let i = 0; i < 256; i++) {
-        const color = fieldColor(i / 255, palette).join(',');
+        const color = fieldColor(i / 255, metric).join(',');
         const gradient = ctx.createRadialGradient(
           i * 32 + 16,
           16,
@@ -67,7 +66,7 @@ export const IntensityField = memo(function IntensityField({
       const pixels = ctx.createImageData(grid.size, grid.size);
       for (const cell of grid.cells) {
         pixels.data.set(
-          fieldColor(iqrColorValue(cell.value, quartiles), palette),
+          fieldColor(iqrColorValue(cell.value, quartiles), metric),
           cell.index * 4,
         );
         pixels.data[cell.index * 4 + 3] = Math.round(255 * cell.support);
@@ -75,7 +74,7 @@ export const IntensityField = memo(function IntensityField({
       ctx.putImageData(pixels, 0, 0);
     }
     return image;
-  }, [grid, palette, is3D, quartiles]);
+  }, [grid, metric, is3D, quartiles]);
   useEffect(() => {
     const node = canvas.current;
     if (!node || !texture) return;

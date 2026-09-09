@@ -92,16 +92,28 @@ export function mapPoint(
   };
 }
 export type DepthAxis = 'work' | 'pay' | 'ai';
-export const INITIAL_CAMERA = { yaw: -0.55, pitch: 0.35 };
-export function rotateCamera(
-  camera: typeof INITIAL_CAMERA,
-  dx: number,
-  dy: number,
-) {
-  return {
-    yaw: (camera.yaw + dx * 0.006) % (Math.PI * 2),
-    pitch: Math.max(-1.2, Math.min(1.2, camera.pitch + dy * 0.006)),
-  };
+export type Camera = { x: number; y: number; z: number; w: number };
+// Preserve the initial view; quaternion rotations keep every orientation reachable.
+export const INITIAL_CAMERA: Camera = {
+  x: Math.sin(0.175) * Math.cos(-0.275),
+  y: Math.cos(0.175) * Math.sin(-0.275),
+  z: Math.sin(0.175) * Math.sin(-0.275),
+  w: Math.cos(0.175) * Math.cos(-0.275),
+};
+export function rotateCamera(camera: Camera, dx: number, dy: number, roll = 0) {
+  const angle = Math.hypot(dx, dy, roll) * 0.006;
+  if (!angle) return camera;
+  const s = (Math.sin(angle / 2) * 0.006) / angle;
+  const ax = dy * s,
+    ay = dx * s,
+    az = roll * s,
+    aw = Math.cos(angle / 2);
+  const x = aw * camera.x + ax * camera.w + ay * camera.z - az * camera.y;
+  const y = aw * camera.y - ax * camera.z + ay * camera.w + az * camera.x;
+  const z = aw * camera.z + ax * camera.y - ay * camera.x + az * camera.w;
+  const w = aw * camera.w - ax * camera.x - ay * camera.y - az * camera.z;
+  const length = Math.hypot(x, y, z, w);
+  return { x: x / length, y: y / length, z: z / length, w: w / length };
 }
 
 // Reference scales use the complete dataset, so filtering never moves a role along the depth axis.
@@ -207,18 +219,25 @@ export function cloud3D(
   const size = Math.max(1, Math.min((width - inset) * 0.62, height * 0.6));
   const origin = mapPoint({ x: 0, y: 0 }, width, height);
   const end = mapPoint({ x: 1, y: 1 }, width, height);
-  const cy = Math.cos(camera.yaw),
-    sy = Math.sin(camera.yaw);
-  const cp = Math.cos(camera.pitch),
-    sp = Math.sin(camera.pitch);
+  const { x: qx, y: qy, z: qz, w: qw } = camera;
+  const matrix = [
+    1 - 2 * (qy * qy + qz * qz),
+    2 * (qx * qy - qz * qw),
+    2 * (qx * qz + qy * qw),
+    2 * (qx * qy + qz * qw),
+    1 - 2 * (qx * qx + qz * qz),
+    2 * (qy * qz - qx * qw),
+    2 * (qx * qz - qy * qw),
+    2 * (qy * qz + qx * qw),
+    1 - 2 * (qx * qx + qy * qy),
+  ];
   const project = (p: { x: number; y: number; z: number }) => {
     const x = p.x - 0.5,
       y = 0.5 - p.y,
       z = p.z - 0.5;
-    const rx = x * cy + z * sy,
-      rz = -x * sy + z * cy;
-    const ry = y * cp - rz * sp,
-      depth = y * sp + rz * cp;
+    const rx = matrix[0] * x + matrix[1] * y + matrix[2] * z;
+    const ry = matrix[3] * x + matrix[4] * y + matrix[5] * z;
+    const depth = matrix[6] * x + matrix[7] * y + matrix[8] * z;
     const scale = 2.8 / (2.8 - depth);
     return {
       x:

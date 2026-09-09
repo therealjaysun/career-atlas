@@ -1,16 +1,9 @@
 export type FieldSample = { x: number; y: number; z: number; value: number };
-export type FieldPalette = 'blue-red' | 'monochrome';
-export const FIELD_PALETTES = {
-  'blue-red': [
-    [37, 93, 155],
-    [224, 230, 232],
-    [176, 43, 48],
-  ],
-  monochrome: [
-    [232, 232, 232],
-    [45, 45, 45],
-  ],
-};
+const FIELD_COLORS = [
+  [37, 93, 155],
+  [224, 230, 232],
+  [176, 43, 48],
+];
 export function fieldQuartiles(values: Iterable<number | null | undefined>) {
   const sorted = [...values]
     .filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
@@ -41,8 +34,9 @@ export function iqrColorValue(value: number, quartiles: FieldQuartiles) {
   const smooth = t * t * (3 - 2 * t);
   return 0.5 + (value < median ? -0.5 : 0.5) * smooth;
 }
-export function fieldColor(value: number, palette: FieldPalette) {
-  const stops = FIELD_PALETTES[palette];
+export function fieldColor(value: number, metric: 'pay' | 'ai' = 'ai') {
+  if (metric === 'pay') value = 1 - value;
+  const stops = FIELD_COLORS;
   const t = Math.max(0, Math.min(1, value)) * (stops.length - 1);
   const i = Math.min(stops.length - 2, Math.floor(t));
   return stops[i].map((v, c) =>
