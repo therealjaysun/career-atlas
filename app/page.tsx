@@ -80,6 +80,7 @@ import {
   compileSkills,
   pathQuality,
   careerLandscape,
+  possibilityTree,
   clusterLabels,
   mapPoint,
   QUALITY,
@@ -406,6 +407,8 @@ export default function Home() {
     [zone, setZone] = useState(0);
   const [criteria, setCriteria] = useState<Criteria>(DEFAULT_CRITERIA);
   const [showAllPaths, setShowAllPaths] = useState(false);
+  const [treeMinFit, setTreeMinFit] = useState(0);
+  const [treeIncludeUnscored, setTreeIncludeUnscored] = useState(true);
   const [background, setBackground] = useState<Background>(EMPTY_BACKGROUND);
   const deferredBackground = useDeferredValue(background);
   const [connectionOverrides, setConnectionOverrides] = useState<
@@ -438,8 +441,8 @@ export default function Home() {
     const element = mapViewport.current;
     if (!element) return;
     const observer = new ResizeObserver(([entry]) => {
-      const width = Math.round(entry.contentRect.width);
-      const height = Math.round(entry.contentRect.height);
+      const width = Math.round(entry.borderBoxSize[0].inlineSize);
+      const height = Math.round(entry.borderBoxSize[0].blockSize);
       if (width > 0 && height > 0)
         setMapSize((previous) =>
           previous.width === width && previous.height === height
@@ -595,6 +598,7 @@ export default function Home() {
     [occupations, effectiveProfile],
   );
   const hasProfile = Object.keys(profile).length > 0 || planned !== null;
+  const isTree = mode === 'career' && layout === 'tree';
   const hasDetails =
     hasProfile ||
     roles.length > 0 ||
@@ -603,7 +607,8 @@ export default function Home() {
     Object.entries(criteria).some(
       ([key, value]) => value !== DEFAULT_CRITERIA[key as keyof Criteria],
     );
-  const focusPaths = mode === 'career' && hasDetails && !showAllPaths;
+  const focusPaths =
+    mode === 'career' && !isTree && hasDetails && !showAllPaths;
   const candidates = useMemo(
     () => searchOccupations(occupations, searchQuery, cluster, zone),
     [occupations, searchQuery, cluster, zone],
@@ -625,9 +630,19 @@ export default function Home() {
       ),
     [occupations, data, effectiveProfile, criteria, percentile, abilities],
   );
+  const tree = useMemo(
+    () => possibilityTree(candidates, scores, treeMinFit, treeIncludeUnscored),
+    [candidates, scores, treeMinFit, treeIncludeUnscored],
+  );
   const landscape = useMemo(
-    () => careerLandscape(candidates, activeClusters, quality, focusPaths),
-    [candidates, activeClusters, quality, focusPaths],
+    () =>
+      careerLandscape(
+        isTree ? tree.ranked : candidates,
+        activeClusters,
+        quality,
+        focusPaths,
+      ),
+    [candidates, activeClusters, quality, focusPaths, isTree, tree.ranked],
   );
   const labels = useMemo(
     () =>
@@ -642,6 +657,9 @@ export default function Home() {
   const hiddenCount = candidates.length - visible.length;
   const layoutKey = `${basis}:${focusPaths}:${layout}:${mapSize.width}:${mapSize.height}:${visible.map((o) => o.id).join(',')}`;
   const [fittedLayout, setFittedLayout] = useState(layoutKey);
+  useEffect(() => {
+    mapViewport.current?.scrollTo(0, 0);
+  }, [layoutKey]);
   if (fittedLayout !== layoutKey) {
     setFittedLayout(layoutKey);
     setView({ x: 0, y: 0, k: 1 });
@@ -649,33 +667,24 @@ export default function Home() {
   }
   const ranked = useMemo(
     () =>
-      [...visible].sort((a, b) =>
-        mode === 'career'
-          ? QUALITY[quality.get(b.id)!.status].order -
-              QUALITY[quality.get(a.id)!.status].order ||
-            (scores.get(b.id)?.score ?? -1) - (scores.get(a.id)?.score ?? -1) ||
-            (backgroundAffinities.get(b.id) ?? 0) -
-              (backgroundAffinities.get(a.id) ?? 0)
-          : 0,
-      ),
-    [visible, mode, scores, quality, backgroundAffinities],
+      isTree
+        ? tree.ranked
+        : [...visible].sort((a, b) =>
+            mode === 'career'
+              ? QUALITY[quality.get(b.id)!.status].order -
+                  QUALITY[quality.get(a.id)!.status].order ||
+                (scores.get(b.id)?.score ?? -1) -
+                  (scores.get(a.id)?.score ?? -1) ||
+                (backgroundAffinities.get(b.id) ?? 0) -
+                  (backgroundAffinities.get(a.id) ?? 0)
+              : 0,
+          ),
+    [visible, mode, scores, quality, backgroundAffinities, isTree, tree.ranked],
   );
-  const isTree = mode === 'career' && layout === 'tree';
-  const branches = useMemo(
-    () =>
-      [...new Set(ranked.map((o) => o.cluster))].slice(0, 4).map((id) => ({
-        id,
-        roles: ranked.filter((o) => o.cluster === id).slice(0, 3),
-      })),
-    [ranked],
-  );
-  const treePositions = new Map(
-    branches.flatMap((b, bi) =>
-      b.roles.map(
-        (o, i) => [o.id, { x: 620, y: 100 + bi * 175 + i * 48 }] as const,
-      ),
-    ),
-  );
+  const { branches } = tree;
+  const treeLeft = collapsed || mapSize.width <= 760 ? 32 : 360;
+  const treeRoleX = treeLeft + 260;
+  const treeWidth = Math.max(mapSize.width, treeRoleX + 630);
   const mapOccupations = isTree ? branches.flatMap((b) => b.roles) : visible;
   const strongPaths = visible.filter(
     (o) => quality.get(o.id)?.status === 'strong',
@@ -718,6 +727,7 @@ export default function Home() {
       };
     });
   const reset = () => {
+    mapViewport.current?.scrollTo(0, 0);
     setView({ x: 0, y: 0, k: 1 });
     setCluster(null);
     setQuery('');
@@ -730,6 +740,7 @@ export default function Home() {
     const svg = svgRef.current;
     if (!svg) return;
     const wheel = (e: WheelEvent) => {
+      if (isTree) return;
       e.preventDefault();
       const p = svg.createSVGPoint();
       p.x = e.clientX;
@@ -740,7 +751,7 @@ export default function Home() {
     };
     svg.addEventListener('wheel', wheel, { passive: false });
     return () => svg.removeEventListener('wheel', wheel);
-  }, [data]);
+  }, [data, isTree]);
   useEffect(() => {
     const context = (
       document as Document & {
@@ -912,10 +923,74 @@ export default function Home() {
             AI rings
           </label>
         </div>
+        {isTree && (
+          <div className="tree-filters">
+            <div className="tree-fit-range">
+              <div className="label-value">
+                <span id="tree-fit-label">Minimum fit score</span>
+                <strong>{treeMinFit}/100</strong>
+              </div>
+              <Slider
+                aria-labelledby="tree-fit-label"
+                min={0}
+                max={100}
+                step={1}
+                value={[treeMinFit]}
+                onValueChange={(value) =>
+                  setTreeMinFit(Array.isArray(value) ? value[0] : value)
+                }
+              />
+            </div>
+            <label className="tree-unscored" htmlFor="tree-unscored">
+              <Checkbox
+                id="tree-unscored"
+                checked={treeIncludeUnscored}
+                onCheckedChange={(checked) =>
+                  setTreeIncludeUnscored(checked === true)
+                }
+              />
+              Include unscored roles
+            </label>
+            <select
+              aria-label="Jump to an activity group"
+              value=""
+              onChange={(event) => {
+                const branch = branches.find(
+                  (b) => String(b.id) === event.target.value,
+                );
+                if (branch)
+                  mapViewport.current?.scrollTo({
+                    top: Math.max(0, branch.y * view.k - 220),
+                    behavior: 'auto',
+                  });
+              }}
+            >
+              <option value="" disabled>
+                Jump to a group…
+              </option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {clusterNames[b.id]} ({b.roles.length})
+                </option>
+              ))}
+            </select>
+            <button
+              className="text-button"
+              onClick={() => {
+                setTreeMinFit(0);
+                setTreeIncludeUnscored(true);
+                setZone(0);
+                reset();
+              }}
+            >
+              Show all roles
+            </button>
+          </div>
+        )}
         {data && (
           <div className="map-caption">
             {isTree
-              ? `${mapOccupations.length} example paths across ${branches.length} clusters · grouping, not a hiring forecast`
+              ? `${mapOccupations.length} of ${occupations.length} roles · ${mapOccupations.filter((o) => scores.get(o.id)?.score == null).length} unscored · highest fit first within each group · scroll to explore`
               : focusPaths
                 ? 'Your remaining paths · activity groups resized and repacked to fit'
                 : basis === 'skills'
@@ -965,26 +1040,36 @@ export default function Home() {
         {mode === 'career' ? (
           <>
             <div className="bubble career-focus">
-              <label htmlFor="show-all-paths">
-                <span>Show all paths</span>
-                <Switch
-                  id="show-all-paths"
-                  checked={showAllPaths}
-                  onCheckedChange={setShowAllPaths}
-                />
-              </label>
-              <p role="status" aria-live="polite">
-                {focusPaths
-                  ? `${visible.length} roles remain · ${hiddenCount} below your guardrails hidden · ${landscape.clusters.length} groups`
-                  : showAllPaths
-                    ? 'All paths are available for comparison, including weaker outcomes.'
-                    : 'Add profile details to narrow and reorganize your map.'}
-              </p>
-              {focusPaths && (
-                <p className="microcopy">
-                  Unknown fit stays visible. Skill filtering needs 4 rated
-                  skills and 20% coverage.
+              {isTree ? (
+                <p>
+                  Use the fit filter above the tree to narrow all roles. Your
+                  guardrails color each path; they don’t hide roles here. Scores
+                  use your rated skills, with coverage shown on each role.
                 </p>
+              ) : (
+                <>
+                  <label htmlFor="show-all-paths">
+                    <span>Show all paths</span>
+                    <Switch
+                      id="show-all-paths"
+                      checked={showAllPaths}
+                      onCheckedChange={setShowAllPaths}
+                    />
+                  </label>
+                  <p role="status" aria-live="polite">
+                    {focusPaths
+                      ? `${visible.length} roles remain · ${hiddenCount} below your guardrails hidden · ${landscape.clusters.length} groups`
+                      : showAllPaths
+                        ? 'All paths are available for comparison, including weaker outcomes.'
+                        : 'Add profile details to narrow and reorganize your map.'}
+                  </p>
+                  {focusPaths && (
+                    <p className="microcopy">
+                      Unknown fit stays visible. Skill filtering needs 4 rated
+                      skills and 20% coverage.
+                    </p>
+                  )}
+                </>
               )}
             </div>
             <Bubble
@@ -1494,8 +1579,9 @@ export default function Home() {
                   Possibilities to explore<span>{visible.length}</span>
                 </div>
                 <p className="microcopy">
-                  Ranked by your guardrails, skill alignment, then interest
-                  overlap.
+                  {isTree
+                    ? 'Ranked by fit score. Guardrail outcomes remain visible.'
+                    : 'Ranked by your guardrails, skill alignment, then interest overlap.'}
                 </p>
                 {ranked.slice(0, 5).map((o) => (
                   <button
@@ -1808,12 +1894,17 @@ export default function Home() {
               ref={svgRef}
               viewBox={
                 isTree
-                  ? '0 0 1200 800'
+                  ? `0 0 ${treeWidth} ${tree.height}`
                   : `0 0 ${mapSize.width} ${mapSize.height}`
+              }
+              style={
+                isTree
+                  ? { width: treeWidth * view.k, height: tree.height * view.k }
+                  : undefined
               }
               aria-label="Career map. Use arrow keys between occupations and Enter to inspect."
               onPointerDown={(e) => {
-                if (e.button !== 0) return;
+                if (isTree || e.button !== 0) return;
                 drag.current = {
                   x: e.clientX,
                   y: e.clientY,
@@ -1851,7 +1942,13 @@ export default function Home() {
                   <feGaussianBlur stdDeviation={1.2 / Math.sqrt(view.k)} />
                 </filter>
               </defs>
-              <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+              <g
+                transform={
+                  isTree
+                    ? undefined
+                    : `translate(${view.x} ${view.y}) scale(${view.k})`
+                }
+              >
                 <g className="connections" aria-hidden="true">
                   {!isTree &&
                     visible.flatMap((o) =>
@@ -1885,58 +1982,62 @@ export default function Home() {
                 {isTree && (
                   <g className="tree-branches" aria-hidden="true">
                     <circle
-                      cx={100}
-                      cy={390}
+                      cx={treeLeft + 20}
+                      cy={220}
                       r={28}
                       fill="#e4e9df"
                       stroke="#32665a"
                     />
                     <text
-                      x={100}
-                      y={445}
-                      textAnchor="middle"
+                      x={treeLeft + 65}
+                      y={215}
                       fill="#203b32"
                       fontSize={18}
                     >
                       Your profile
                     </text>
                     <text
-                      x={100}
-                      y={467}
-                      textAnchor="middle"
+                      x={treeLeft + 65}
+                      y={239}
                       fill="#637169"
                       fontSize={12}
                     >
                       {Object.keys(profile).length} skills rated
                     </text>
-                    {branches.map((b, bi) => {
-                      const y = 148 + bi * 175;
+                    <path
+                      d={`M${treeLeft + 20} 248 V${branches.at(-1)?.y ?? 248}`}
+                      fill="none"
+                      stroke="#32665a"
+                      opacity={0.3}
+                    />
+                    {branches.map((b) => {
+                      const y = b.y;
                       return (
                         <g key={b.id}>
                           <path
-                            d={`M128 390 C220 390 210 ${y} 325 ${y}`}
+                            d={`M${treeLeft + 20} ${y} H${treeLeft + 90} V${tree.positions.get(b.roles.at(-1)!.id)}`}
                             fill="none"
                             stroke={COLORS[b.id]}
                             strokeWidth={1.4}
                             opacity={0.35}
                           />
-                          <circle cx={325} cy={y} r={7} fill={COLORS[b.id]} />
+                          <circle
+                            cx={treeLeft + 90}
+                            cy={y}
+                            r={7}
+                            fill={COLORS[b.id]}
+                          />
                           <text
-                            x={325}
-                            y={y - 33}
-                            textAnchor="middle"
+                            x={treeLeft + 112}
+                            y={y + 5}
                             fill={COLORS[b.id]}
                             fontSize={15}
                           >
-                            {clusterNames[b.id].split(' · ').map((part, i) => (
-                              <tspan key={part} x={325} dy={i ? 17 : 0}>
-                                {part}
-                              </tspan>
-                            ))}
+                            {clusterNames[b.id]} · {b.roles.length} roles
                           </text>
                           {b.roles.map((o) => {
-                            const p = treePositions.get(o.id)!;
-                            const path = `M333 ${y} C435 ${y} 500 ${p.y} ${p.x - 12} ${p.y}`;
+                            const roleY = tree.positions.get(o.id)!;
+                            const path = `M${treeLeft + 90} ${roleY - 24} Q${treeLeft + 90} ${roleY} ${treeLeft + 114} ${roleY} H${treeRoleX - 12}`;
                             const ai = aiValue(o, aiMetric);
                             return (
                               <g key={o.id}>
@@ -1971,7 +2072,9 @@ export default function Home() {
                   </g>
                 )}
                 {mapOccupations.map((o, i) => {
-                  const position = isTree ? treePositions.get(o.id)! : point(o);
+                  const position = isTree
+                    ? { x: treeRoleX, y: tree.positions.get(o.id)! }
+                    : point(o);
                   const p = { x: 0, y: 0 };
                   const score = scores.get(o.id)?.score ?? 0;
                   const missingSkills =
@@ -2001,11 +2104,16 @@ export default function Home() {
                           ? 0
                           : -1
                       }
-                      aria-label={`${o.title}, ${QUALITY[quality.get(o.id)!.status].label}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}${aiOverlay ? `, ${aiLabel(o, aiMetric)}` : ''}`}
+                      aria-label={`${o.title}, ${scores.get(o.id)?.score == null ? 'unscored' : `fit ${score}/100, ${scores.get(o.id)?.coverage}% coverage`}, ${QUALITY[quality.get(o.id)!.status].label}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}${aiOverlay ? `, ${aiLabel(o, aiMetric)}` : ''}`}
                       className="occupation-node"
-                      onFocus={() => {
+                      onFocus={(event) => {
                         setFocusIndex(i);
                         setHovered(o.id);
+                        if (isTree)
+                          event.currentTarget.scrollIntoView({
+                            block: 'center',
+                            inline: 'nearest',
+                          });
                       }}
                       onBlur={() => setHovered(null)}
                       onPointerDown={(e) => e.stopPropagation()}
@@ -2097,13 +2205,23 @@ export default function Home() {
                             x={p.x + 24}
                             y={p.y + 17}
                             fill={QUALITY[quality.get(o.id)!.status].color}
-                            fontSize={12}
+                            fontSize={14}
                           >
-                            {QUALITY[quality.get(o.id)!.status].label} ·{' '}
-                            {money(wageAt(o, percentile, unit), true, unit)}
+                            {scores.get(o.id)?.score == null
+                              ? 'Unscored'
+                              : `Fit ${score}/100 · ${scores.get(o.id)?.coverage}% coverage`}{' '}
+                            · {money(wageAt(o, percentile, unit), true, unit)}
                             {aiOverlay
                               ? ` · AI ${aiValue(o, aiMetric) === null ? '—' : `${(aiValue(o, aiMetric)! * 100).toFixed(1)}/100`}`
                               : ''}
+                          </text>
+                          <text
+                            x={p.x + 24}
+                            y={p.y + 35}
+                            fill={QUALITY[quality.get(o.id)!.status].color}
+                            fontSize={14}
+                          >
+                            {QUALITY[quality.get(o.id)!.status].label}
                           </text>
                         </>
                       )}
@@ -2171,9 +2289,11 @@ export default function Home() {
           )}
           {!visible.length && data && (
             <div className="map-empty">
-              {focusPaths
-                ? 'No roles meet your current guardrails and filters.'
-                : 'No matching occupations'}
+              {isTree
+                ? 'No roles match your fit score and education filters. Lower the minimum or include unscored roles.'
+                : focusPaths
+                  ? 'No roles meet your current guardrails and filters.'
+                  : 'No matching occupations'}
               {focusPaths && (
                 <button
                   onClick={() => {
@@ -2188,6 +2308,10 @@ export default function Home() {
                 onClick={() => {
                   reset();
                   setZone(0);
+                  if (isTree) {
+                    setTreeMinFit(0);
+                    setTreeIncludeUnscored(true);
+                  }
                   if (focusPaths) setShowAllPaths(true);
                 }}
               >
@@ -2264,7 +2388,10 @@ export default function Home() {
         <div className="control-divider" />
         <button
           className="icon-button"
-          onClick={() => setView({ x: 0, y: 0, k: 1 })}
+          onClick={() => {
+            setView({ x: 0, y: 0, k: 1 });
+            mapViewport.current?.scrollTo(0, 0);
+          }}
           aria-label="Reset map position"
         >
           <Scan size={18} />
@@ -2405,7 +2532,11 @@ export default function Home() {
             <ArrowUpRight size={12} />
           </button>
         </span>
-        <span>Scroll to zoom · Drag to explore · Click to discover</span>
+        <span>
+          {isTree
+            ? 'Scroll through all roles · Use +/− to zoom · Click to discover'
+            : 'Scroll to zoom · Drag to explore · Click to discover'}
+        </span>
         <button
           className="mobile-info"
           onClick={() => setAbout(true)}
@@ -3401,9 +3532,11 @@ export default function Home() {
           </a>
           <p>
             Once you add profile details or change a guardrail, career
-            navigation hides known threshold failures and removes empty groups
-            from both the map and tree. Show all paths restores them for
-            comparison in pink. Missing evidence stays visible in gray. Amber
+            navigation’s map hides known threshold failures and removes empty
+            groups. Show all paths restores them for comparison in rust. The
+            tree includes all roles by default and uses its own minimum fit
+            filter, even when coverage is low. Unscored roles have a separate
+            inclusion control. Missing evidence stays visible in gray. Amber
             means alignment or growth is close to your minimum. Green means the
             available evidence meets your guardrails. At least four rated skills
             covering 20% of occupational skill importance are needed; this
@@ -3418,9 +3551,12 @@ export default function Home() {
           </p>
           <h3>Two layers: possibility and AI exposure.</h3>
           <p>
-            The map groups tasks; the possibility tree samples up to three
-            leading roles in each of four leading clusters under your filters.
-            Tree branches show those groups, not a sequence of guaranteed
+            The map groups tasks; the possibility tree includes every role
+            matching your fit and education filters across all activity groups.
+            Roles are ordered by fit within each group. Scroll or jump between
+            groups; Show all roles clears the tree’s filters. The displayed fit
+            covers only rated skills, so check the coverage alongside each
+            score. Tree branches show those groups, not a sequence of guaranteed
             transitions. Node centers and base branches show outcome quality.
             Red rings and red branch segments show the chosen AI index, from
             0–100. Gray dashed rings mean missing data.

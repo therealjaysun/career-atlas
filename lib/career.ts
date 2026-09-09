@@ -616,6 +616,34 @@ export const QUALITY = {
   below: { label: 'Below your thresholds', color: '#b14832', order: 0 },
 };
 
+export function possibilityTree(
+  occupations: Occupation[],
+  scores: Map<string, { score: number | null }>,
+  minScore = 0,
+  includeUnscored = true,
+) {
+  const ranked = occupations
+    .filter((o) => {
+      const score = scores.get(o.id)?.score;
+      return score == null ? includeUnscored : score >= minScore;
+    })
+    .sort(
+      (a, b) =>
+        (scores.get(b.id)?.score ?? -1) - (scores.get(a.id)?.score ?? -1) ||
+        a.title.localeCompare(b.title),
+    );
+  let y = 300;
+  const positions = new Map<string, number>();
+  const branches = [...new Set(ranked.map((o) => o.cluster))].map((id) => {
+    const roles = ranked.filter((o) => o.cluster === id);
+    const branchY = y;
+    roles.forEach((o, i) => positions.set(o.id, y + 64 + i * 64));
+    y += 96 + roles.length * 64;
+    return { id, roles, y: branchY };
+  });
+  return { ranked, branches, positions, height: y + 240 };
+}
+
 export function careerLandscape(
   occupations: Occupation[],
   clusters: Cluster[],

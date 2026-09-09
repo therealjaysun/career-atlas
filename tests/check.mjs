@@ -14,6 +14,7 @@ import {
   compileSkills,
   occupationLayout,
   careerLandscape,
+  possibilityTree,
   clusterLabels,
   mapPoint,
   pickerSuggestions,
@@ -388,6 +389,74 @@ const qualities = (profile, criteria = base, percentile = 2) =>
   );
 const sourceCoordinates = d.occupations.map(({ id, x, y }) => [id, x, y]);
 const outcome = qualities(full);
+// The tree is exhaustive and its score filter does not depend on guardrail status or coverage.
+const treeScores = new Map(
+  d.occupations.map((o) => [o.id, alignment(o, full)]),
+);
+const allTree = possibilityTree(d.occupations, treeScores);
+assert.deepEqual(
+  new Set(allTree.branches.flatMap((b) => b.roles.map((o) => o.id))),
+  allIds,
+);
+assert.equal(allTree.branches.length, d.clusters.length);
+assert.equal(allTree.positions.size, 923);
+assert.equal(new Set(allTree.positions.values()).size, 923);
+for (const branch of allTree.branches) {
+  assert(branch.roles.every((o) => o.cluster === branch.id));
+  branch.roles.forEach((o, i) => {
+    assert(allTree.positions.get(o.id) > branch.y);
+    assert(allTree.positions.get(o.id) + 40 < allTree.height);
+    if (i) {
+      assert(
+        (treeScores.get(branch.roles[i - 1].id).score ?? -1) >=
+          (treeScores.get(o.id).score ?? -1),
+      );
+      assert(
+        allTree.positions.get(o.id) -
+          allTree.positions.get(branch.roles[i - 1].id) >=
+          64,
+      );
+    }
+  });
+}
+for (const cutoff of [0, 50, 80, 100]) {
+  const filtered = possibilityTree(d.occupations, treeScores, cutoff, false);
+  assert.deepEqual(
+    new Set(filtered.ranked.map((o) => o.id)),
+    new Set(
+      d.occupations
+        .filter(
+          (o) =>
+            treeScores.get(o.id).score !== null &&
+            treeScores.get(o.id).score >= cutoff,
+        )
+        .map((o) => o.id),
+    ),
+  );
+  assert.equal(
+    filtered.branches.flatMap((b) => b.roles).length,
+    filtered.ranked.length,
+  );
+}
+const sparseScores = new Map([
+  [dev.id, { score: 80, coverage: 5 }],
+  [clerk.id, { score: 20, coverage: 5 }],
+]);
+assert.deepEqual(
+  possibilityTree([dev, clerk], sparseScores, 80).ranked.map((o) => o.id),
+  [dev.id],
+);
+assert.equal(possibilityTree(d.occupations, new Map()).ranked.length, 923);
+assert.equal(
+  possibilityTree(d.occupations, new Map(), 0, false).ranked.length,
+  0,
+);
+assert.deepEqual(possibilityTree([], new Map()).branches, []);
+assert(
+  possibilityTree(d.occupations, treeScores, 0, true).ranked.some(
+    (o) => o.id === clerk.id,
+  ),
+);
 const before = performance.now();
 const focused = careerLandscape(d.occupations, d.clusters, outcome, true);
 console.log(

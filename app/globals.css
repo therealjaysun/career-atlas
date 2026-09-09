@@ -2566,6 +2566,46 @@ footer .mobile-info {
   width: 28px;
   height: 28px;
 }
+.tree-stage .map-viewport {
+  overflow: auto;
+  overscroll-behavior: contain;
+  scroll-padding: 220px 40px 180px;
+}
+.tree-stage .map-viewport > svg,
+.tree-stage .map-viewport > svg:active {
+  max-width: none;
+  touch-action: pan-x pan-y;
+  cursor: default;
+}
+.tree-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: 1 0 100%;
+  gap: 16px 24px;
+  font-size: 14px;
+}
+.tree-fit-range {
+  flex: 0 1 250px;
+  min-width: 180px;
+}
+.tree-fit-range .label-value {
+  margin-bottom: 8px;
+}
+.tree-unscored {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.tree-filters select {
+  max-width: 280px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--foreground);
+}
 .cluster-label text {
   font-weight: 600;
 }
