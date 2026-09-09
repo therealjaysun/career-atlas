@@ -619,11 +619,13 @@ export const QUALITY = {
 export function possibilityTree(
   occupations: Occupation[],
   scores: Map<string, { score: number | null }>,
+  quality: Map<string, { status: keyof typeof QUALITY }>,
   minScore = 0,
   includeUnscored = true,
 ) {
   const ranked = occupations
     .filter((o) => {
+      if (quality.get(o.id)?.status === 'below') return false;
       const score = scores.get(o.id)?.score;
       return score == null ? includeUnscored : score >= minScore;
     })

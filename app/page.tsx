@@ -408,7 +408,6 @@ export default function Home() {
     [zone, setZone] = useState(0);
   const [criteria, setCriteria] = useState<Criteria>(DEFAULT_CRITERIA);
   const [showAllPaths, setShowAllPaths] = useState(false);
-  const [treeMinFit, setTreeMinFit] = useState(0);
   const [treeIncludeUnscored, setTreeIncludeUnscored] = useState(true);
   const [background, setBackground] = useState<Background>(EMPTY_BACKGROUND);
   const deferredBackground = useDeferredValue(background);
@@ -621,8 +620,15 @@ export default function Home() {
     [occupations, data, effectiveProfile, criteria, percentile, abilities],
   );
   const tree = useMemo(
-    () => possibilityTree(candidates, scores, treeMinFit, treeIncludeUnscored),
-    [candidates, scores, treeMinFit, treeIncludeUnscored],
+    () =>
+      possibilityTree(
+        candidates,
+        scores,
+        quality,
+        criteria.minFit,
+        treeIncludeUnscored,
+      ),
+    [candidates, scores, quality, criteria.minFit, treeIncludeUnscored],
   );
   const landscape = useMemo(
     () =>
@@ -918,16 +924,19 @@ export default function Home() {
             <div className="tree-fit-range">
               <div className="label-value">
                 <span id="tree-fit-label">Minimum fit score</span>
-                <strong>{treeMinFit}/100</strong>
+                <strong>{criteria.minFit}/100</strong>
               </div>
               <Slider
                 aria-labelledby="tree-fit-label"
                 min={0}
                 max={100}
                 step={1}
-                value={[treeMinFit]}
+                value={[criteria.minFit]}
                 onValueChange={(value) =>
-                  setTreeMinFit(Array.isArray(value) ? value[0] : value)
+                  setCriteria((current) => ({
+                    ...current,
+                    minFit: Array.isArray(value) ? value[0] : value,
+                  }))
                 }
               />
             </div>
@@ -967,13 +976,11 @@ export default function Home() {
             <button
               className="text-button"
               onClick={() => {
-                setTreeMinFit(0);
-                setTreeIncludeUnscored(true);
-                setZone(0);
-                reset();
+                setCollapsed(false);
+                setPhase(4);
               }}
             >
-              Show all roles
+              Adjust guardrails
             </button>
           </div>
         )}
@@ -1031,10 +1038,10 @@ export default function Home() {
           <>
             <div className="bubble career-focus">
               {isTree ? (
-                <p>
-                  Use the fit filter above the tree to narrow all roles. Your
-                  guardrails color each path; they don’t hide roles here. Scores
-                  use your rated skills, with coverage shown on each role.
+                <p role="status" aria-live="polite">
+                  {visible.length} roles remain · {hiddenCount} excluded by your
+                  filters. Roles below your guardrails are hidden. Both fit
+                  sliders share the same minimum.
                 </p>
               ) : (
                 <>
@@ -1484,14 +1491,14 @@ export default function Home() {
               </div>
               <div className="criteria-range">
                 <div className="label-value">
-                  <span id="fit-label">Minimum skill alignment</span>
+                  <span id="fit-label">Minimum fit score</span>
                   <strong>{criteria.minFit}/100</strong>
                 </div>
                 <Slider
                   aria-labelledby="fit-label"
-                  min={40}
+                  min={0}
                   max={100}
-                  step={5}
+                  step={1}
                   value={[criteria.minFit]}
                   onValueChange={(v) =>
                     setCriteria((c) => ({
@@ -1570,7 +1577,7 @@ export default function Home() {
                 </div>
                 <p className="microcopy">
                   {isTree
-                    ? 'Ranked by fit score. Guardrail outcomes remain visible.'
+                    ? 'All matching roles, ranked by fit score. Roles below your guardrails are excluded.'
                     : 'Ranked by your guardrails, skill alignment, then interest overlap.'}
                 </p>
                 {ranked.slice(0, 5).map((o) => (
@@ -2280,7 +2287,7 @@ export default function Home() {
           {!visible.length && data && (
             <div className="map-empty">
               {isTree
-                ? 'No roles match your fit score and education filters. Lower the minimum or include unscored roles.'
+                ? 'No roles match your current guardrails and filters. Adjust your minimum fit, pay target, or other guardrails.'
                 : focusPaths
                   ? 'No roles meet your current guardrails and filters.'
                   : 'No matching occupations'}
@@ -2296,16 +2303,21 @@ export default function Home() {
               )}
               <button
                 onClick={() => {
-                  reset();
-                  setZone(0);
                   if (isTree) {
-                    setTreeMinFit(0);
-                    setTreeIncludeUnscored(true);
+                    setCollapsed(false);
+                    setPhase(4);
+                  } else {
+                    reset();
+                    setZone(0);
+                    if (focusPaths) setShowAllPaths(true);
                   }
-                  if (focusPaths) setShowAllPaths(true);
                 }}
               >
-                {focusPaths ? 'Show all paths' : 'Clear filters'}
+                {isTree
+                  ? 'Adjust guardrails'
+                  : focusPaths
+                    ? 'Show all paths'
+                    : 'Clear filters'}
               </button>
             </div>
           )}
@@ -2466,7 +2478,7 @@ export default function Home() {
       <div className="map-legend">
         {color === 'quality' || isTree ? (
           Object.entries(QUALITY)
-            .filter(([key]) => !focusPaths || key !== 'below')
+            .filter(([key]) => !(focusPaths || isTree) || key !== 'below')
             .map(([key, q]) => (
               <span className="quality-legend-item" key={key}>
                 <i style={{ background: q.color }} />
@@ -3524,13 +3536,15 @@ export default function Home() {
             Once you add profile details or change a guardrail, career
             navigation’s map hides known threshold failures and removes empty
             groups. Show all paths restores them for comparison in rust. The
-            tree includes all roles by default and uses its own minimum fit
-            filter, even when coverage is low. Unscored roles have a separate
-            inclusion control. Missing evidence stays visible in gray. Amber
-            means alignment or growth is close to your minimum. Green means the
-            available evidence meets your guardrails. At least four rated skills
-            covering 20% of occupational skill importance are needed; this
-            prototype threshold is a heuristic, not a validated prediction.
+            tree includes every role matching your guardrails, with no sampling
+            cap. Both minimum fit sliders update the same threshold. The tree
+            applies it even when coverage is low and also hides every known
+            guardrail failure. Unscored roles have a separate inclusion control.
+            Missing evidence stays visible in gray. Amber means alignment or
+            growth is close to your minimum. Green means the available evidence
+            meets your guardrails. At least four rated skills covering 20% of
+            occupational skill importance are needed; this prototype threshold
+            is a heuristic, not a validated prediction.
           </p>
           <p>
             Market demand uses the BLS projection period displayed for each
@@ -3542,14 +3556,14 @@ export default function Home() {
           <h3>Two layers: possibility and AI exposure.</h3>
           <p>
             The map groups tasks; the possibility tree includes every role
-            matching your fit and education filters across all activity groups.
+            matching your guardrails and filters across all activity groups.
             Roles are ordered by fit within each group. Scroll or jump between
-            groups; Show all roles clears the tree’s filters. The displayed fit
-            covers only rated skills, so check the coverage alongside each
-            score. Tree branches show those groups, not a sequence of guaranteed
-            transitions. Node centers and base branches show outcome quality.
-            Red rings and red branch segments show the chosen AI index, from
-            0–100. Gray dashed rings mean missing data.
+            groups; Adjust guardrails changes which roles are included. The
+            displayed fit covers only rated skills, so check the coverage
+            alongside each score. Tree branches show those groups, not a
+            sequence of guaranteed transitions. Node centers and base branches
+            show outcome quality. Red rings and red branch segments show the
+            chosen AI index, from 0–100. Gray dashed rings mean missing data.
           </p>
           <p>
             Red highlights start at your adjustable cutoff, initially 30/100.

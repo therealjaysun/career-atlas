@@ -457,11 +457,11 @@ const qualities = (profile, criteria = base, percentile = 2) =>
   );
 const sourceCoordinates = d.occupations.map(({ id, x, y }) => [id, x, y]);
 const outcome = qualities(full);
-// The tree is exhaustive and its score filter does not depend on guardrail status or coverage.
+// The tree is exhaustive before filters; every known guardrail failure is excluded before layout.
 const treeScores = new Map(
   d.occupations.map((o) => [o.id, alignment(o, full)]),
 );
-const allTree = possibilityTree(d.occupations, treeScores);
+const allTree = possibilityTree(d.occupations, treeScores, new Map());
 assert.deepEqual(
   new Set(allTree.branches.flatMap((b) => b.roles.map((o) => o.id))),
   allIds,
@@ -488,7 +488,13 @@ for (const branch of allTree.branches) {
   });
 }
 for (const cutoff of [0, 50, 80, 100]) {
-  const filtered = possibilityTree(d.occupations, treeScores, cutoff, false);
+  const filtered = possibilityTree(
+    d.occupations,
+    treeScores,
+    new Map(),
+    cutoff,
+    false,
+  );
   assert.deepEqual(
     new Set(filtered.ranked.map((o) => o.id)),
     new Set(
@@ -511,21 +517,79 @@ const sparseScores = new Map([
   [clerk.id, { score: 20, coverage: 5 }],
 ]);
 assert.deepEqual(
-  possibilityTree([dev, clerk], sparseScores, 80).ranked.map((o) => o.id),
+  possibilityTree([dev, clerk], sparseScores, new Map(), 80).ranked.map(
+    (o) => o.id,
+  ),
   [dev.id],
 );
-assert.equal(possibilityTree(d.occupations, new Map()).ranked.length, 923);
 assert.equal(
-  possibilityTree(d.occupations, new Map(), 0, false).ranked.length,
+  possibilityTree(d.occupations, new Map(), new Map()).ranked.length,
+  923,
+);
+assert.equal(
+  possibilityTree(d.occupations, new Map(), new Map(), 0, false).ranked.length,
   0,
 );
-assert.deepEqual(possibilityTree([], new Map()).branches, []);
+assert.deepEqual(possibilityTree([], new Map(), new Map()).branches, []);
 assert(
-  possibilityTree(d.occupations, treeScores, 0, true).ranked.some(
+  possibilityTree(d.occupations, treeScores, new Map(), 0, true).ranked.some(
     (o) => o.id === clerk.id,
   ),
 );
 const before = performance.now();
+for (const minFit of [0, 80, 95, 100]) {
+  const criteria = { ...base, minFit };
+  const quality = qualities(full, criteria);
+  const tree = possibilityTree(
+    d.occupations,
+    treeScores,
+    quality,
+    criteria.minFit,
+  );
+  const expected = d.occupations.filter(
+    (o) =>
+      quality.get(o.id).status !== 'below' &&
+      (treeScores.get(o.id).score === null ||
+        treeScores.get(o.id).score >= criteria.minFit),
+  );
+  assert.deepEqual(
+    new Set(tree.ranked.map((o) => o.id)),
+    new Set(expected.map((o) => o.id)),
+  );
+  assert.deepEqual(
+    new Set(tree.positions.keys()),
+    new Set(expected.map((o) => o.id)),
+  );
+  assert.equal(tree.branches.flatMap((b) => b.roles).length, expected.length);
+  assert(
+    tree.branches.every(
+      (b) =>
+        b.roles.length > 0 &&
+        b.roles.every((o) => quality.get(o.id).status !== 'below'),
+    ),
+  );
+}
+// Pay percentile changes remove and restore even a 100-fit role; unscored inclusion cannot override failures.
+const payGuard = { ...base, payFloor: 150000 };
+assert.equal(
+  possibilityTree([dev], treeScores, qualities(full, payGuard, 2), base.minFit)
+    .ranked.length,
+  0,
+);
+assert.equal(
+  possibilityTree([dev], treeScores, qualities(full, payGuard, 4), base.minFit)
+    .ranked.length,
+  1,
+);
+assert.equal(
+  possibilityTree([dev], new Map(), qualities({}, payGuard, 2), 0, true).ranked
+    .length,
+  0,
+);
+assert.equal(
+  possibilityTree([clerk], treeScores, outcome, 0, true).ranked.length,
+  0,
+);
 const focused = careerLandscape(d.occupations, d.clusters, outcome, true);
 console.log(
   `Compacted ${focused.occupations.length} career roles in ${(performance.now() - before).toFixed(0)}ms`,
