@@ -423,7 +423,7 @@ export default function Home() {
     [error, setError] = useState('');
   const [prefills, setPrefills] = useState<Prefills | null>(null);
   const [prefillError, setPrefillError] = useState(false);
-  const [mode, setMode] = useState('career'),
+  const [mode, setMode] = useState('explore'),
     [collapsed, setCollapsed] = useState(false),
     [phase, setPhase] = useState(1);
   const [roles, setRoles] = useState<string[]>([]),
@@ -1076,13 +1076,13 @@ export default function Home() {
           }}
         >
           <TabsList className="mode-switch">
-            <TabsTrigger value="career">
-              <Compass />
-              Career navigation
-            </TabsTrigger>
             <TabsTrigger value="explore">
               <Database />
               Explore the database
+            </TabsTrigger>
+            <TabsTrigger value="career">
+              <Compass />
+              Career navigation
             </TabsTrigger>
           </TabsList>
         </Tabs>
