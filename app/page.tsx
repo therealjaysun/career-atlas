@@ -468,7 +468,13 @@ export default function Home() {
       });
     return () => c.abort();
   }, []);
+  const needsPrefills =
+    phase === 5 ||
+    connectionsOpen ||
+    about ||
+    Object.values(background).some(Boolean);
   useEffect(() => {
+    if (!needsPrefills || prefills || prefillError) return;
     const controller = new AbortController();
     fetch('/background-options.json', { signal: controller.signal })
       .then((response) => {
@@ -483,7 +489,7 @@ export default function Home() {
         if (error.name !== 'AbortError') setPrefillError(true);
       });
     return () => controller.abort();
-  }, []);
+  }, [needsPrefills, prefills, prefillError]);
   const occupations = useMemo(
     () => occupationLayout(data, basis),
     [data, basis],

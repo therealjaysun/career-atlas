@@ -400,30 +400,29 @@ export function pickerSuggestions(
   selected: SearchItem[] = [],
   allowCustom = false,
 ) {
+  if (!query.trim() && items.length >= 50) return items.slice(0, 50);
   const ids = new Set(items.map((item) => item.id));
   const all = [...items, ...selected.filter((item) => !ids.has(item.id))];
   const q = normalize(query);
   const direct = q
-    ? all.filter((item) =>
-        [item.name, ...(item.aliases ?? [])].some((name) =>
-          normalize(name).includes(q),
-        ),
-      )
+    ? all.filter((item) => searchNames(item).some((name) => name.includes(q)))
     : all;
+  const scoreTitle = titleScorer(query);
   const found = (direct.length ? direct : all)
-    .map((item) => ({ item, score: titleScore(item, query) }))
+    .map((item) => ({ item, score: scoreTitle(item) }))
     .filter((entry) => entry.score >= 0.025)
     .sort((a, b) => b.score - a.score)
     .slice(0, 50)
     .map((entry) => entry.item);
   const custom = query.trim();
   const fold = (text: string) => text.trim().normalize('NFKC').toLowerCase();
+  const foldedCustom = fold(custom);
   if (
     allowCustom &&
     custom &&
-    !all.some((item) => fold(item.name) === fold(custom))
+    !all.some((item) => fold(item.name) === foldedCustom)
   )
-    found.push({ id: `custom:${fold(custom)}`, name: custom, custom: true });
+    found.push({ id: `custom:${foldedCustom}`, name: custom, custom: true });
   return found;
 }
 const normalize = (s: string) =>
@@ -434,35 +433,66 @@ const normalize = (s: string) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 
-export function titleScore(item: SearchItem, query: string) {
-  const q = normalize(query.slice(0, 160));
-  if (!q) return 1;
-  if (item.id.startsWith(query.trim())) return 1;
-  let best = 0;
-  for (const name of [item.name, ...(item.aliases ?? [])]) {
-    const n = normalize(name);
-    if (n === q) return 1;
-    let score = defaultFilter(n, q);
-    // A short trigram fallback also catches substitutions that subsequence search misses.
-    if (!score && q.length >= 5) {
-      const grams = new Set(
-        Array.from({ length: q.length - 2 }, (_, i) => q.slice(i, i + 3)),
-      );
-      const other = new Set(
-        Array.from({ length: n.length - 2 }, (_, i) => n.slice(i, i + 3)),
-      );
-      const overlap = [...grams].filter((g) => other.has(g)).length;
-      const similarity = (2 * overlap) / (grams.size + other.size);
-      if (similarity >= 0.6) score = similarity * 0.08;
-    }
-    best = Math.max(
-      best,
-      score > 0
-        ? Math.min(0.99, score * (name === item.name ? 1.05 : 0.95))
-        : 0,
-    );
+// Dataset and picker records are immutable; weak keys release replaced records.
+const namesByItem = new WeakMap<SearchItem | Occupation, string[]>();
+const tasksByOccupation = new WeakMap<Occupation, string[]>();
+function searchNames(item: SearchItem | Occupation) {
+  let names = namesByItem.get(item);
+  if (!names) {
+    names = [
+      'name' in item ? item.name : item.title,
+      ...(item.aliases ?? []),
+    ].map(normalize);
+    namesByItem.set(item, names);
   }
-  return best;
+  return names;
+}
+function titleScorer(query: string) {
+  const q = normalize(query.slice(0, 160));
+  const prefix = query.trim();
+  const letters = [...new Set(q)];
+  const grams =
+    q.length >= 5
+      ? new Set(
+          Array.from({ length: q.length - 2 }, (_, i) => q.slice(i, i + 3)),
+        )
+      : null;
+  return (item: SearchItem | Occupation) => {
+    if (!q || item.id.startsWith(prefix)) return 1;
+    let best = 0;
+    const names = searchNames(item);
+    for (let index = 0; index < names.length; index++) {
+      const n = names[index];
+      if (n === q) return 1;
+      // Subsequence/transposition matching cannot succeed if a query character is absent.
+      let score = letters.every((letter) => n.includes(letter))
+        ? defaultFilter(n, q)
+        : 0;
+      // A short trigram fallback also catches substitutions that subsequence search misses.
+      if (!score && grams) {
+        let overlap = 0;
+        for (const gram of grams) if (n.includes(gram)) overlap++;
+        // The name has at least `overlap` distinct grams: skip allocation if even that upper bound cannot match.
+        if (2 * overlap >= 0.6 * (grams.size + overlap)) {
+          const other = new Set(
+            Array.from({ length: Math.max(0, n.length - 2) }, (_, i) =>
+              n.slice(i, i + 3),
+            ),
+          );
+          const similarity = (2 * overlap) / (grams.size + other.size);
+          if (similarity >= 0.6) score = similarity * 0.08;
+        }
+      }
+      best = Math.max(
+        best,
+        score > 0 ? Math.min(0.99, score * (index === 0 ? 1.05 : 0.95)) : 0,
+      );
+    }
+    return best;
+  };
+}
+export function titleScore(item: SearchItem, query: string) {
+  return titleScorer(query)(item);
 }
 export function searchOccupations(
   occupations: Occupation[],
@@ -470,6 +500,16 @@ export function searchOccupations(
   cluster: number | null,
   zone: number,
 ) {
+  const q = normalize(query);
+  const scoreTitle = titleScorer(query);
+  const taskMatch = (o: Occupation) => {
+    let tasks = tasksByOccupation.get(o);
+    if (!tasks) {
+      tasks = o.tasks.map(normalize);
+      tasksByOccupation.set(o, tasks);
+    }
+    return tasks.some((task) => task.includes(q));
+  };
   return occupations
     .filter(
       (o) =>
@@ -478,12 +518,7 @@ export function searchOccupations(
     )
     .map((o) => ({
       o,
-      score: !query.trim()
-        ? 1
-        : titleScore({ id: o.id, name: o.title, aliases: o.aliases }, query) ||
-          (o.tasks.some((t) => normalize(t).includes(normalize(query)))
-            ? 0.03
-            : 0),
+      score: !query.trim() ? 1 : scoreTitle(o) || (taskMatch(o) ? 0.03 : 0),
     }))
     .filter((x) => x.score >= 0.025)
     .sort((a, b) => b.score - a.score || a.o.title.localeCompare(b.o.title))
@@ -586,14 +621,6 @@ export function payColor(
     ),
   );
   return `hsl(${154 + t * 12} ${20 + t * 18}% ${44 - t * 22}%)`;
-}
-export function matches(
-  o: Occupation,
-  query: string,
-  cluster: number | null,
-  zone: number,
-) {
-  return searchOccupations([o], query, cluster, zone).length > 0;
 }
 export type Criteria = {
   education: number;

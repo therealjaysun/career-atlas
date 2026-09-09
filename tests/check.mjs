@@ -7,8 +7,8 @@ import {
   DEFAULT_CRITERIA,
   wageAt,
   money,
-  matches,
   searchOccupations,
+  titleScore,
   EMPTY_BACKGROUND,
   aiValue,
   aiLabel,
@@ -101,6 +101,24 @@ const d = JSON.parse(
 const prefills = JSON.parse(
   readFileSync(new URL('../public/background-options.json', import.meta.url)),
 );
+// Cached search must preserve accents, transpositions, repeated characters and substitution fallback.
+for (const [name, query, expected] of [
+  ['Éducation', 'education', 1],
+  ['abcd', 'abdc', 0.105],
+  ['aabbcc', 'abc', 0.176361746715],
+  ['abcdefghij', 'abcdefx', 0.0516923076923077],
+  ['abcdefghij', 'zyxwvu', 0],
+]) {
+  const item = { id: 'example', name, aliases: [name] };
+  for (let repeat = 0; repeat < 2; repeat++)
+    assert(Math.abs(titleScore(item, query) - expected) < 1e-12);
+}
+const selectedCustom = { id: 'custom:mine', name: 'My own school' };
+assert.deepEqual(
+  pickerSuggestions(prefills.source.items, '  ', [selectedCustom], true),
+  prefills.source.items.slice(0, 50),
+);
+assert.deepEqual(pickerSuggestions([], '', [selectedCustom]), [selectedCustom]);
 assert(validPrefills(prefills));
 assert(!validPrefills(null));
 assert(
@@ -812,8 +830,6 @@ assert.equal(
   ).status,
   'unknown',
 );
-assert(matches(dev, 'software', null, 0));
-assert(!matches(dev, 'unfindable phrase', null, 0));
 for (const typo of [
   'software enginer',
   'softwrae developer',
