@@ -4,7 +4,9 @@ import { memo, useEffect, useMemo, useRef } from 'react';
 import { mapPoint, type cloud3D } from '@/lib/career';
 import {
   fieldColor,
+  iqrColorValue,
   intensityField,
+  type FieldQuartiles,
   type FieldPalette,
   type FieldSample,
 } from '@/lib/intensity-field';
@@ -18,6 +20,7 @@ export const IntensityField = memo(function IntensityField({
   sigma,
   opacity,
   palette,
+  quartiles,
 }: {
   samples: FieldSample[];
   scene: ReturnType<typeof cloud3D> | null;
@@ -27,6 +30,7 @@ export const IntensityField = memo(function IntensityField({
   sigma: number;
   opacity: number;
   palette: FieldPalette;
+  quartiles: FieldQuartiles;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const is3D = scene !== null;
@@ -62,13 +66,16 @@ export const IntensityField = memo(function IntensityField({
     } else {
       const pixels = ctx.createImageData(grid.size, grid.size);
       for (const cell of grid.cells) {
-        pixels.data.set(fieldColor(cell.value, palette), cell.index * 4);
+        pixels.data.set(
+          fieldColor(iqrColorValue(cell.value, quartiles), palette),
+          cell.index * 4,
+        );
         pixels.data[cell.index * 4 + 3] = Math.round(255 * cell.support);
       }
       ctx.putImageData(pixels, 0, 0);
     }
     return image;
-  }, [grid, palette, is3D]);
+  }, [grid, palette, is3D, quartiles]);
   useEffect(() => {
     const node = canvas.current;
     if (!node || !texture) return;
@@ -109,7 +116,7 @@ export const IntensityField = memo(function IntensityField({
           ctx.globalAlpha = opacity * cell.support * 0.1;
           ctx.drawImage(
             texture,
-            Math.round(cell.value * 255) * 32,
+            Math.round(iqrColorValue(cell.value, quartiles) * 255) * 32,
             0,
             32,
             32,
@@ -123,6 +130,6 @@ export const IntensityField = memo(function IntensityField({
       ctx.globalAlpha = 1;
     });
     return () => cancelAnimationFrame(frame);
-  }, [texture, scene, grid, width, height, view, opacity]);
+  }, [texture, scene, grid, width, height, view, opacity, quartiles]);
   return <canvas ref={canvas} className="intensity-field" aria-hidden="true" />;
 });

@@ -11,6 +11,36 @@ export const FIELD_PALETTES = {
     [45, 45, 45],
   ],
 };
+export function fieldQuartiles(values: Iterable<number | null | undefined>) {
+  const sorted = [...values]
+    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
+    .sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const quantile = (p: number) => {
+    const i = (sorted.length - 1) * p;
+    const lo = Math.floor(i),
+      hi = Math.ceil(i);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+  };
+  return { q1: quantile(0.25), median: quantile(0.5), q3: quantile(0.75) };
+}
+export type FieldQuartiles = ReturnType<typeof fieldQuartiles>;
+
+// Apply color scaling after spatial averaging, so the field still averages measured values.
+export function iqrColorValue(value: number, quartiles: FieldQuartiles) {
+  if (!quartiles || !Number.isFinite(value)) return 0.5;
+  const { q1, median, q3 } = quartiles;
+  if (value === median) return 0.5;
+  const span = value < median ? median - q1 : q3 - median;
+  // If one half is tied, use the remaining IQR; constant data stays neutral.
+  const width = span || q3 - q1;
+  // Float32 spatial averages can differ slightly from an otherwise constant input.
+  if (!width)
+    return Math.abs(value - median) < 1e-5 ? 0.5 : value < median ? 0 : 1;
+  const t = Math.max(0, Math.min(1, Math.abs(value - median) / width));
+  const smooth = t * t * (3 - 2 * t);
+  return 0.5 + (value < median ? -0.5 : 0.5) * smooth;
+}
 export function fieldColor(value: number, palette: FieldPalette) {
   const stops = FIELD_PALETTES[palette];
   const t = Math.max(0, Math.min(1, value)) * (stops.length - 1);

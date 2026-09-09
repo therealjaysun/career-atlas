@@ -2467,6 +2467,16 @@ footer .mobile-info {
   font-size: 12px;
   color: var(--muted-foreground);
 }
+.field-quartile {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.field-quartile i {
+  width: 8px;
+  height: 8px;
+  border: 1px solid #63746a55;
+}
 .intensity-field {
   position: absolute;
   inset: 0;

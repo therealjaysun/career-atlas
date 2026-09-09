@@ -145,6 +145,7 @@ export function depthDimension(
         : `Pay · P${PERCENTILES[percentile]} · ${unit}`;
   return {
     label,
+    max,
     low:
       axis === 'work'
         ? 'Knowledge · 0'

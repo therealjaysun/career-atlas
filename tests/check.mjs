@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { observeViewport } from '../lib/viewport.ts';
-import { intensityField, fieldColor } from '../lib/intensity-field.ts';
+import {
+  intensityField,
+  fieldColor,
+  fieldQuartiles,
+  iqrColorValue,
+} from '../lib/intensity-field.ts';
 import {
   workStyles,
   matchesWorkStyle,
@@ -323,6 +328,110 @@ const d = JSON.parse(
   console.log(
     `3D projection + labels: ${((performance.now() - started) / 60).toFixed(1)}ms/frame for ${d.occupations.length} roles (excludes browser paint).`,
   );
+}
+// Quartile color mapping is nonlinear, robust to tails, and independent of spatial averaging.
+{
+  const scale = fieldQuartiles([
+    0,
+    10,
+    20,
+    30,
+    40,
+    null,
+    NaN,
+    Infinity,
+    undefined,
+  ]);
+  assert.deepEqual(scale, { q1: 10, median: 20, q3: 30 });
+  assert.equal(iqrColorValue(10, scale), 0);
+  assert.equal(iqrColorValue(20, scale), 0.5);
+  assert.equal(iqrColorValue(30, scale), 1);
+  assert.equal(iqrColorValue(-100, scale), 0);
+  assert.equal(iqrColorValue(1000, scale), 1);
+  assert.notEqual(iqrColorValue(12.5, scale), 0.125); // Not a linear ramp.
+  const positions = Array.from({ length: 101 }, (_, i) =>
+    iqrColorValue(i / 2, scale),
+  );
+  assert(
+    positions.every(
+      (v, i) => v >= 0 && v <= 1 && (!i || v >= positions[i - 1]),
+    ),
+  );
+  assert.deepEqual(fieldQuartiles([0, 10, 20, 30, 40000]), scale); // A larger outlier cannot flatten the middle.
+  assert.deepEqual(fieldQuartiles([0, 10, 20, 30]), {
+    q1: 7.5,
+    median: 15,
+    q3: 22.5,
+  });
+  assert.equal(fieldQuartiles([]), null);
+  assert.equal(iqrColorValue(1, null), 0.5);
+  assert.equal(iqrColorValue(5, fieldQuartiles([5])), 0.5);
+  assert.equal(iqrColorValue(0, fieldQuartiles([0, 0, 0, 0])), 0.5);
+  assert.equal(iqrColorValue(1, fieldQuartiles([0, 0, 0, 0, 1])), 1);
+  for (const values of [
+    [0, 0, 0, 1, 2],
+    [0, 1, 2, 2, 2],
+  ]) {
+    const tied = fieldQuartiles(values);
+    assert(values.every((v) => Number.isFinite(iqrColorValue(v, tied))));
+    assert.equal(iqrColorValue(tied.median, tied), 0.5);
+  }
+  const constantScale = fieldQuartiles([0.7, 0.7, 0.7]);
+  for (const dims of [2, 3]) {
+    const constantField = intensityField(
+      [
+        { x: 0.4, y: 0.5, z: 0.5, value: 0.7 },
+        { x: 0.6, y: 0.5, z: 0.5, value: 0.7 },
+      ],
+      dims,
+      0.08,
+    );
+    assert(
+      constantField.cells.every(
+        (c) => iqrColorValue(c.value, constantScale) === 0.5,
+      ),
+    );
+  }
+  const work = workStyles(d);
+  for (const metric of ['pay', 'ai']) {
+    const dimension = depthDimension(
+      d.occupations,
+      work,
+      metric,
+      2,
+      'annual',
+      'observed',
+    );
+    const quartiles = fieldQuartiles(dimension.values.values());
+    assert(quartiles.q1 < quartiles.median && quartiles.median < quartiles.q3);
+    const originalUnits = fieldQuartiles(
+      [...dimension.values.values()].map((v) =>
+        v === null ? null : v * dimension.max,
+      ),
+    );
+    for (const v of dimension.values.values())
+      if (v !== null)
+        assert(
+          Math.abs(
+            iqrColorValue(v, quartiles) -
+              iqrColorValue(v * dimension.max, originalUnits),
+          ) < 1e-10,
+        );
+    const changed = depthDimension(
+      d.occupations,
+      work,
+      metric,
+      4,
+      'annual',
+      'applicability',
+    );
+    assert.notDeepEqual(fieldQuartiles(changed.values.values()), quartiles);
+    for (const palette of ['blue-red', 'monochrome'])
+      assert.deepEqual(
+        fieldColor(iqrColorValue(quartiles.median, quartiles), palette),
+        fieldColor(0.5, palette),
+      );
+  }
 }
 // Fields encode a continuous local average, not discrete groups or occupation density.
 {

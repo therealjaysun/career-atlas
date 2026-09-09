@@ -3,7 +3,13 @@
 import Link from 'next/link';
 import { observeViewport } from '@/lib/viewport';
 import { IntensityField } from '@/components/intensity-field';
-import { FIELD_PALETTES, type FieldPalette } from '@/lib/intensity-field';
+import {
+  FIELD_PALETTES,
+  fieldQuartiles,
+  fieldColor,
+  iqrColorValue,
+  type FieldPalette,
+} from '@/lib/intensity-field';
 import {
   useDeferredValue,
   useEffect,
@@ -714,6 +720,14 @@ export default function Home() {
       ),
     [occupations, workProfiles, fieldMetric, percentile, unit, aiMetric],
   );
+  const fieldScale = useMemo(
+    () => fieldQuartiles(fieldDimension.values.values()),
+    [fieldDimension],
+  );
+  const fieldQuartileLabel = (value: number) =>
+    fieldMetric === 'pay'
+      ? money({ value: value * fieldDimension.max, capped: false }, false, unit)
+      : `${(value * 100).toFixed(1)}/100`;
   const mappedMatches = useMemo(
     () =>
       is3D
@@ -1285,18 +1299,37 @@ export default function Home() {
                 </div>
                 <div
                   className="field-legend"
-                  aria-label={`${fieldDimension.label}, low ${fieldDimension.low}, high ${fieldDimension.high}`}
+                  aria-label={`${fieldDimension.label}, interquartile color scale across occupations`}
                 >
-                  <strong>{fieldDimension.label}</strong>
-                  <span>{fieldDimension.low}</span>
+                  <strong>{fieldDimension.label} · IQR colors</strong>
                   <i
                     style={{
-                      background: `linear-gradient(90deg, ${FIELD_PALETTES[fieldPalette].map((rgb) => `rgb(${rgb.join(',')})`).join(',')})`,
+                      background:
+                        fieldScale?.q1 === fieldScale?.q3
+                          ? `rgb(${fieldColor(0.5, fieldPalette).join(',')})`
+                          : `linear-gradient(90deg, ${FIELD_PALETTES[fieldPalette].map((rgb) => `rgb(${rgb.join(',')})`).join(',')})`,
                     }}
                   />
-                  <span>{fieldDimension.high}</span>
+                  {fieldScale &&
+                    (
+                      [
+                        ['25th', fieldScale.q1],
+                        ['Median', fieldScale.median],
+                        ['75th', fieldScale.q3],
+                      ] as const
+                    ).map(([label, value]) => (
+                      <span className="field-quartile" key={label}>
+                        <i
+                          aria-hidden="true"
+                          style={{
+                            background: `rgb(${fieldColor(iqrColorValue(value, fieldScale), fieldPalette).join(',')})`,
+                          }}
+                        />
+                        {label}: {fieldQuartileLabel(value)}
+                      </span>
+                    ))}
                   <small>
-                    Smoothed local averages · fading = less nearby data
+                    Quartiles across occupations · fading = less nearby data
                   </small>
                   {!fieldSamples.length && (
                     <span>No measured values for this field.</span>
@@ -2465,6 +2498,7 @@ export default function Home() {
               sigma={fieldSmoothing / 100}
               opacity={fieldOpacity / 100}
               palette={fieldPalette}
+              quartiles={fieldScale}
             />
           )}
           {error ? (
@@ -4371,9 +4405,15 @@ export default function Home() {
             monochrome runs from light to dark. The legend shows the selected
             percentile, pay unit, or AI index. Smoothing blends neighboring
             measurements using distance-weighted averages. Color represents the
-            average value; fading indicates less nearby data. This is an
-            exploratory interpolation, not a prediction of pay or job loss
-            between occupations.
+            average value; fading indicates less nearby data. Colors use the
+            interquartile range: the 25th percentile anchors the low color, the
+            median anchors the midpoint, and the 75th anchors the high color.
+            Smooth nonlinear transitions emphasize this middle range; values
+            outside it saturate. Quartiles compare all measured occupations at
+            the selected wage percentile/unit or AI index, so filtering does not
+            move the scale. Tied values share a color; a constant distribution
+            stays neutral. This is an exploratory interpolation, not a
+            prediction of pay or job loss between occupations.
           </p>
           <p>
             In 2D, a smooth background image uses the current map coordinates.
