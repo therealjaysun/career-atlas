@@ -2,18 +2,18 @@ import { defaultFilter } from 'cmdk';
 
 export const PERCENTILES = [10, 25, 50, 75, 90] as const;
 export const COLORS = [
-  '#d2b074',
-  '#a4a0ed',
-  '#79cbb7',
-  '#de91ad',
-  '#9abbe9',
-  '#74d5c0',
-  '#b49bfa',
-  '#e6aa80',
-  '#d39de4',
-  '#a9c982',
-  '#8ca6c0',
-  '#d5cd93',
+  '#38665f',
+  '#996622',
+  '#617442',
+  '#537587',
+  '#a55438',
+  '#466644',
+  '#805b51',
+  '#397970',
+  '#876d3b',
+  '#446485',
+  '#815c38',
+  '#72713e',
 ];
 export type WagePoint = { value: number; capped: boolean } | null;
 export type Occupation = {
@@ -76,10 +76,27 @@ export type Cluster = {
   featureBasis?: 'relative-demand' | 'reported-level';
 };
 export type ClusterBasis = 'activities' | 'skills';
-export function clusterLabels(clusters: Cluster[], zoom: number) {
+export function mapPoint(
+  o: { x: number; y: number },
+  width = 1200,
+  height = 800,
+) {
+  const left = Math.min(100, width * 0.12);
+  const top = Math.min(80, height * 0.1);
+  return {
+    x: left + o.x * (width - left * 2),
+    y: top + o.y * (height - top - Math.min(100, height * 0.14)),
+  };
+}
+export function clusterLabels(
+  clusters: Cluster[],
+  zoom: number,
+  viewportWidth = 1200,
+  viewportHeight = 800,
+) {
   const scale = 1 / Math.sqrt(zoom);
   const placed: { x: number; y: number; width: number; height: number }[] = [];
-  return clusters.map((c) => {
+  return clusters.flatMap((c) => {
     const lines = c.name.split(' · ').flatMap((part) => {
       const rows = [''];
       for (const word of part.split(/\s+/)) {
@@ -94,19 +111,25 @@ export function clusterLabels(clusters: Cluster[], zoom: number) {
     const width =
       (Math.max(...lines.map((line) => line.length)) * 8.4 + 20) * scale;
     const height = (lines.length * 18 + 12) * scale;
-    const anchorX = 100 + c.x * 1000,
-      anchorY = 80 + c.y * 620;
+    const { x: anchorX, y: anchorY } = mapPoint(
+      c,
+      viewportWidth,
+      viewportHeight,
+    );
     let best = { x: 0, y: 0, score: Infinity };
     for (let dx = -3; dx <= 3; dx++) {
       for (let dy = -4; dy <= 4; dy++) {
         const x = Math.max(
           12,
-          Math.min(1188 - width, anchorX - width / 2 + dx * width * 0.65),
+          Math.min(
+            viewportWidth - 12 - width,
+            anchorX - width / 2 + dx * width * 0.65,
+          ),
         );
         const y = Math.max(
           12,
           Math.min(
-            788 - height,
+            viewportHeight - 12 - height,
             anchorY - height - 20 * scale + dy * (height + 14 * scale),
           ),
         );
@@ -144,8 +167,19 @@ export function clusterLabels(clusters: Cluster[], zoom: number) {
       anchorY,
       scale,
     };
+    // At narrow widths, omit colliding labels until zoom/filtering leaves room; every occupation remains visible.
+    if (
+      label.width > viewportWidth - 24 ||
+      label.height > viewportHeight - 24 ||
+      placed.some(
+        (p) =>
+          Math.min(label.x + width, p.x + p.width) > Math.max(label.x, p.x) &&
+          Math.min(label.y + height, p.y + p.height) > Math.max(label.y, p.y),
+      )
+    )
+      return [];
     placed.push(label);
-    return label;
+    return [label];
   });
 }
 export type Dataset = {
@@ -542,7 +576,7 @@ export function payColor(
   point: WagePoint,
   unit: 'annual' | 'hourly' = 'annual',
 ) {
-  if (!point) return '#626574';
+  if (!point) return '#737d75';
   const t = Math.max(
     0,
     Math.min(
@@ -551,7 +585,7 @@ export function payColor(
         Math.log(7),
     ),
   );
-  return `hsl(${190 + t * 90} ${52 + t * 22}% ${58 + t * 12}%)`;
+  return `hsl(${154 + t * 12} ${20 + t * 18}% ${44 - t * 22}%)`;
 }
 export function matches(
   o: Occupation,
@@ -576,10 +610,10 @@ export const DEFAULT_CRITERIA: Criteria = {
   minOpenings: 1000,
 };
 export const QUALITY = {
-  strong: { label: 'Strong path', color: '#75d5b2', order: 3 },
-  tradeoff: { label: 'Trade-offs', color: '#e6bd7a', order: 2 },
-  unknown: { label: 'Needs more evidence', color: '#8e92aa', order: 1 },
-  below: { label: 'Below your thresholds', color: '#e18f9f', order: 0 },
+  strong: { label: 'Strong path', color: '#24664e', order: 3 },
+  tradeoff: { label: 'Trade-offs', color: '#94611c', order: 2 },
+  unknown: { label: 'Needs more evidence', color: '#69766f', order: 1 },
+  below: { label: 'Below your thresholds', color: '#b14832', order: 0 },
 };
 
 export function careerLandscape(

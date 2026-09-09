@@ -15,6 +15,7 @@ import {
   occupationLayout,
   careerLandscape,
   clusterLabels,
+  mapPoint,
   pickerSuggestions,
   validPrefills,
   PREFILL_FIELDS,
@@ -421,6 +422,40 @@ for (const clusters of [
         );
     }
   }
+}
+// The cloud uses its actual viewport; labels and points share the same projection.
+for (const [width, height] of [
+  [1318, 490],
+  [920, 450],
+  [360, 340],
+]) {
+  for (const cluster of d.clusters) {
+    const point = mapPoint(cluster, width, height);
+    const label = clusterLabels([cluster], 1, width, height)[0];
+    assert.equal(point.x, label.anchorX);
+    assert.equal(point.y, label.anchorY);
+    assert(point.x > 0 && point.x < width && point.y > 0 && point.y < height);
+    assert(label.x >= 0 && label.x + label.width <= width);
+    assert(label.y >= 0 && label.y + label.height <= height);
+  }
+  for (const clusters of [d.clusters, d.layouts.skills.clusters]) {
+    const labels = clusterLabels(clusters, 1, width, height);
+    assert(labels.length > 0);
+    for (const [i, a] of labels.entries())
+      for (const b of labels.slice(i + 1)) {
+        assert(
+          a.x + a.width <= b.x ||
+            b.x + b.width <= a.x ||
+            a.y + a.height <= b.y ||
+            b.y + b.height <= a.y,
+        );
+      }
+  }
+  const points = d.occupations.map((o) => mapPoint(o, width, height));
+  assert(
+    Math.max(...points.map((p) => p.x)) - Math.min(...points.map((p) => p.x)) >
+      width * 0.7,
+  );
 }
 const survivors = new Set(focused.occupations.map((o) => o.id));
 assert(survivors.has(dev.id) && !survivors.has(clerk.id));

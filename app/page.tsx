@@ -81,6 +81,7 @@ import {
   pathQuality,
   careerLandscape,
   clusterLabels,
+  mapPoint,
   QUALITY,
   DEFAULT_CRITERIA,
   type Criteria,
@@ -214,7 +215,7 @@ function ExposureRing({
           cx={x}
           cy={y}
           r={radius + 1}
-          fill="#981f3b"
+          fill="#b14832"
           opacity={0.08 + value! * 0.1}
         />
       )}
@@ -223,7 +224,7 @@ function ExposureRing({
         cy={y}
         r={radius}
         fill="none"
-        stroke={value === null ? '#8c8393' : '#66253a'}
+        stroke={value === null ? '#737d75' : '#d1b6ab'}
         strokeWidth={1}
         strokeDasharray={value === null ? '2 3' : undefined}
         opacity={0.6}
@@ -235,7 +236,7 @@ function ExposureRing({
           r={radius}
           fill="none"
           pathLength={100}
-          stroke={high ? '#ff5976' : '#b94761'}
+          stroke={high ? '#b14832' : '#b77c65'}
           strokeWidth={high ? 2.4 : 1.4}
           strokeLinecap="round"
           strokeDasharray={`${value * 100} ${100 - value * 100}`}
@@ -431,6 +432,24 @@ export default function Home() {
     [about, setAbout] = useState(false);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 }),
     [focusIndex, setFocusIndex] = useState(0);
+  const [mapSize, setMapSize] = useState({ width: 1200, height: 800 });
+  const mapViewport = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = mapViewport.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width);
+      const height = Math.round(entry.contentRect.height);
+      if (width > 0 && height > 0)
+        setMapSize((previous) =>
+          previous.width === width && previous.height === height
+            ? previous
+            : { width, height },
+        );
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   const svgRef = useRef<SVGSVGElement>(null),
     drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(
       null,
@@ -611,8 +630,9 @@ export default function Home() {
     [candidates, activeClusters, quality, focusPaths],
   );
   const labels = useMemo(
-    () => clusterLabels(landscape.clusters, view.k),
-    [landscape.clusters, view.k],
+    () =>
+      clusterLabels(landscape.clusters, view.k, mapSize.width, mapSize.height),
+    [landscape.clusters, view.k, mapSize],
   );
   const visible = landscape.occupations;
   const mapById = useMemo(
@@ -620,7 +640,7 @@ export default function Home() {
     [visible],
   );
   const hiddenCount = candidates.length - visible.length;
-  const layoutKey = `${basis}:${focusPaths}:${visible.map((o) => o.id).join(',')}`;
+  const layoutKey = `${basis}:${focusPaths}:${layout}:${mapSize.width}:${mapSize.height}:${visible.map((o) => o.id).join(',')}`;
   const [fittedLayout, setFittedLayout] = useState(layoutKey);
   if (fittedLayout !== layoutKey) {
     setFittedLayout(layoutKey);
@@ -680,11 +700,15 @@ export default function Home() {
   );
   const detail = selected ? byId.get(selected) : null,
     hover = hovered ? mapById.get(hovered) : null;
-  const point = (o: { x: number; y: number }) => ({
-    x: 100 + o.x * 1000,
-    y: 80 + o.y * 620,
-  });
-  const zoom = (factor: number, anchor = { x: 600, y: 400 }) =>
+  const point = (o: { x: number; y: number }) =>
+    mapPoint(o, mapSize.width, mapSize.height);
+  const zoom = (
+    factor: number,
+    anchor = {
+      x: isTree ? 600 : mapSize.width / 2,
+      y: isTree ? 400 : mapSize.height / 2,
+    },
+  ) =>
     setView((v) => {
       const k = Math.max(0.7, Math.min(5, v.k * factor));
       return {
@@ -818,79 +842,76 @@ export default function Home() {
           <Info size={14} />
         </button>
       </header>
-      <div className="map-heading">
-        <div className="eyebrow">
-          {mode === 'career'
-            ? 'YOUR CAREER CONSTELLATION'
-            : 'THE WORLD OF WORK'}
+      <div className="map-header">
+        <div className="map-heading">
+          <div className="eyebrow">
+            {mode === 'career' ? 'YOUR CAREER MAP' : 'THE WORLD OF WORK'}
+          </div>
+          <h1>
+            {mode === 'career'
+              ? 'Your career possibilities'
+              : 'Explore the world of work'}
+          </h1>
         </div>
-        <h1>
-          {mode === 'career'
-            ? 'See where you could go.'
-            : 'Follow the connections.'}
-        </h1>
-        <p>
-          {mode === 'career'
-            ? 'Your skills. A whole world of possibilities.'
-            : '923 occupations, connected by what they do.'}
-        </p>
-      </div>
-      <div className="map-toolbar">
-        {isTree ? (
-          <span className="tree-color-label">Core & branch: path quality</span>
-        ) : (
-          <>
-            <span>Color by</span>
-            <Tabs value={color} onValueChange={(v) => setColor(String(v))}>
-              <TabsList className="color-switch">
-                <TabsTrigger value="cluster">
-                  <Layers />
-                  Cluster
-                </TabsTrigger>
-                <TabsTrigger value="pay">
-                  <DollarSign />
-                  Pay
-                </TabsTrigger>
-                {mode === 'career' && (
-                  <TabsTrigger value="quality">
-                    <Compass />
-                    Path quality
+        <div className="map-toolbar">
+          {isTree ? (
+            <span className="tree-color-label">
+              Core & branch: path quality
+            </span>
+          ) : (
+            <>
+              <span>Color by</span>
+              <Tabs value={color} onValueChange={(v) => setColor(String(v))}>
+                <TabsList className="color-switch">
+                  <TabsTrigger value="cluster">
+                    <Layers />
+                    Cluster
                   </TabsTrigger>
-                )}
+                  <TabsTrigger value="pay">
+                    <DollarSign />
+                    Pay
+                  </TabsTrigger>
+                  {mode === 'career' && (
+                    <TabsTrigger value="quality">
+                      <Compass />
+                      Path quality
+                    </TabsTrigger>
+                  )}
+                </TabsList>
+              </Tabs>
+            </>
+          )}
+          {mode === 'career' && (
+            <Tabs
+              value={layout}
+              onValueChange={(v) => {
+                setLayout(String(v));
+                setFocusIndex(0);
+                setView({ x: 0, y: 0, k: 1 });
+              }}
+            >
+              <TabsList className="color-switch">
+                <TabsTrigger value="map">
+                  <Orbit />
+                  Map
+                </TabsTrigger>
+                <TabsTrigger value="tree">
+                  <GitBranch />
+                  Possibility tree
+                </TabsTrigger>
               </TabsList>
             </Tabs>
-          </>
-        )}
-        {mode === 'career' && (
-          <Tabs
-            value={layout}
-            onValueChange={(v) => {
-              setLayout(String(v));
-              setFocusIndex(0);
-              setView({ x: 0, y: 0, k: 1 });
-            }}
-          >
-            <TabsList className="color-switch">
-              <TabsTrigger value="map">
-                <Orbit />
-                Map
-              </TabsTrigger>
-              <TabsTrigger value="tree">
-                <GitBranch />
-                Possibility tree
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        )}
-        <label className="ai-toggle" htmlFor="ai-map-toggle">
-          <Switch
-            id="ai-map-toggle"
-            checked={aiOverlay}
-            onCheckedChange={setAiOverlay}
-            aria-label="Show AI exposure rings"
-          />
-          AI rings
-        </label>
+          )}
+          <label className="ai-toggle" htmlFor="ai-map-toggle">
+            <Switch
+              id="ai-map-toggle"
+              checked={aiOverlay}
+              onCheckedChange={setAiOverlay}
+              aria-label="Show AI exposure rings"
+            />
+            AI rings
+          </label>
+        </div>
       </div>
       <aside
         className={`floating-panel ${collapsed ? 'collapsed' : ''}`}
@@ -1747,6 +1768,9 @@ export default function Home() {
                 : basis === 'skills'
                   ? 'Grouped by skill profiles · nearby roles need similar skills'
                   : 'Grouped by activities · nearby roles share responsibilities'}
+            {!isTree && labels.length < landscape.clusters.length && (
+              <span>Zoom for more group labels</span>
+            )}
             {aiOverlay && (
               <button
                 onClick={() => {
@@ -1761,409 +1785,417 @@ export default function Home() {
             )}
           </div>
         )}
-        {error ? (
-          <div className="map-message">
-            <Info />
-            <h2>Couldn’t load the map</h2>
-            <p>{error}</p>
-            <button
-              className="primary-button"
-              onClick={() => location.reload()}
-            >
-              Try again
-            </button>
-          </div>
-        ) : !data ? (
-          <div className="map-message">
-            <LoaderCircle className="loading-spin" />
-            <p>Connecting the world of work…</p>
-          </div>
-        ) : (
-          <svg
-            ref={svgRef}
-            viewBox="0 0 1200 800"
-            aria-label="Career constellation. Use arrow keys between occupations and Enter to inspect."
-            onPointerDown={(e) => {
-              if (e.button !== 0) return;
-              drag.current = {
-                x: e.clientX,
-                y: e.clientY,
-                vx: view.x,
-                vy: view.y,
-              };
-              e.currentTarget.setPointerCapture(e.pointerId);
-            }}
-            onPointerMove={(e) => {
-              if (!drag.current) return;
-              const m = e.currentTarget.getScreenCTM();
-              const scale = m?.a ?? 1;
-              const origin = drag.current;
-              setView((v) => ({
-                ...v,
-                x: origin.vx + (e.clientX - origin.x) / scale,
-                y: origin.vy + (e.clientY - origin.y) / scale,
-              }));
-            }}
-            onPointerUp={() => {
-              drag.current = null;
-            }}
-            onPointerCancel={() => {
-              drag.current = null;
-            }}
-          >
-            <defs>
-              <filter
-                id="node-glow"
-                x="-50%"
-                y="-50%"
-                width="200%"
-                height="200%"
+        <div className="map-viewport" ref={mapViewport}>
+          {error ? (
+            <div className="map-message">
+              <Info />
+              <h2>Couldn’t load the map</h2>
+              <p>{error}</p>
+              <button
+                className="primary-button"
+                onClick={() => location.reload()}
               >
-                <feGaussianBlur stdDeviation={1.2 / Math.sqrt(view.k)} />
-              </filter>
-            </defs>
-            <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
-              <g className="connections" aria-hidden="true">
-                {!isTree &&
-                  visible.flatMap((o) =>
-                    o.neighbors
-                      .slice(0, 2)
-                      .filter(
-                        ([id, sim]) =>
-                          id > o.id && sim > 0.13 && mapById.has(id),
-                      )
-                      .map(([id]) => {
-                        const target = mapById.get(id)!;
-                        const a = point(o),
-                          b = point(target);
-                        return (
-                          <line
-                            key={o.id + id}
-                            x1={a.x}
-                            y1={a.y}
-                            x2={b.x}
-                            y2={b.y}
-                            stroke={COLORS[o.cluster]}
-                            strokeWidth={0.65 / view.k}
-                            opacity={
-                              hovered === o.id || hovered === id ? 0.65 : 0.12
-                            }
-                          />
-                        );
-                      }),
-                  )}
-              </g>
-              {isTree && (
-                <g className="tree-branches" aria-hidden="true">
-                  <circle
-                    cx={100}
-                    cy={390}
-                    r={28}
-                    fill="#282439"
-                    stroke="#aa95d0"
-                  />
-                  <text
-                    x={100}
-                    y={445}
-                    textAnchor="middle"
-                    fill="#e7def4"
-                    fontSize={18}
-                  >
-                    Your profile
-                  </text>
-                  <text
-                    x={100}
-                    y={467}
-                    textAnchor="middle"
-                    fill="#a099b1"
-                    fontSize={12}
-                  >
-                    {Object.keys(profile).length} skills rated
-                  </text>
-                  {branches.map((b, bi) => {
-                    const y = 148 + bi * 175;
-                    return (
-                      <g key={b.id}>
-                        <path
-                          d={`M128 390 C220 390 210 ${y} 325 ${y}`}
-                          fill="none"
-                          stroke={COLORS[b.id]}
-                          strokeWidth={1.4}
-                          opacity={0.35}
-                        />
-                        <circle cx={325} cy={y} r={7} fill={COLORS[b.id]} />
-                        <text
-                          x={325}
-                          y={y - 33}
-                          textAnchor="middle"
-                          fill={COLORS[b.id]}
-                          fontSize={15}
-                        >
-                          {clusterNames[b.id].split(' · ').map((part, i) => (
-                            <tspan key={part} x={325} dy={i ? 17 : 0}>
-                              {part}
-                            </tspan>
-                          ))}
-                        </text>
-                        {b.roles.map((o) => {
-                          const p = treePositions.get(o.id)!;
-                          const path = `M333 ${y} C435 ${y} 500 ${p.y} ${p.x - 12} ${p.y}`;
-                          const ai = aiValue(o, aiMetric);
+                Try again
+              </button>
+            </div>
+          ) : !data ? (
+            <div className="map-message">
+              <LoaderCircle className="loading-spin" />
+              <p>Connecting the world of work…</p>
+            </div>
+          ) : (
+            <svg
+              ref={svgRef}
+              viewBox={
+                isTree
+                  ? '0 0 1200 800'
+                  : `0 0 ${mapSize.width} ${mapSize.height}`
+              }
+              aria-label="Career map. Use arrow keys between occupations and Enter to inspect."
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                drag.current = {
+                  x: e.clientX,
+                  y: e.clientY,
+                  vx: view.x,
+                  vy: view.y,
+                };
+                e.currentTarget.setPointerCapture(e.pointerId);
+              }}
+              onPointerMove={(e) => {
+                if (!drag.current) return;
+                const m = e.currentTarget.getScreenCTM();
+                const scale = m?.a ?? 1;
+                const origin = drag.current;
+                setView((v) => ({
+                  ...v,
+                  x: origin.vx + (e.clientX - origin.x) / scale,
+                  y: origin.vy + (e.clientY - origin.y) / scale,
+                }));
+              }}
+              onPointerUp={() => {
+                drag.current = null;
+              }}
+              onPointerCancel={() => {
+                drag.current = null;
+              }}
+            >
+              <defs>
+                <filter
+                  id="node-glow"
+                  x="-50%"
+                  y="-50%"
+                  width="200%"
+                  height="200%"
+                >
+                  <feGaussianBlur stdDeviation={1.2 / Math.sqrt(view.k)} />
+                </filter>
+              </defs>
+              <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+                <g className="connections" aria-hidden="true">
+                  {!isTree &&
+                    visible.flatMap((o) =>
+                      o.neighbors
+                        .slice(0, 2)
+                        .filter(
+                          ([id, sim]) =>
+                            id > o.id && sim > 0.13 && mapById.has(id),
+                        )
+                        .map(([id]) => {
+                          const target = mapById.get(id)!;
+                          const a = point(o),
+                            b = point(target);
                           return (
-                            <g key={o.id}>
-                              <path
-                                d={path}
-                                fill="none"
-                                stroke={
-                                  QUALITY[quality.get(o.id)!.status].color
-                                }
-                                strokeWidth={2.4}
-                                opacity={0.6}
-                              />
-                              {aiOverlay && ai !== null && (
+                            <line
+                              key={o.id + id}
+                              x1={a.x}
+                              y1={a.y}
+                              x2={b.x}
+                              y2={b.y}
+                              stroke={COLORS[o.cluster]}
+                              strokeWidth={0.65 / view.k}
+                              opacity={
+                                hovered === o.id || hovered === id ? 0.65 : 0.12
+                              }
+                            />
+                          );
+                        }),
+                    )}
+                </g>
+                {isTree && (
+                  <g className="tree-branches" aria-hidden="true">
+                    <circle
+                      cx={100}
+                      cy={390}
+                      r={28}
+                      fill="#e4e9df"
+                      stroke="#32665a"
+                    />
+                    <text
+                      x={100}
+                      y={445}
+                      textAnchor="middle"
+                      fill="#203b32"
+                      fontSize={18}
+                    >
+                      Your profile
+                    </text>
+                    <text
+                      x={100}
+                      y={467}
+                      textAnchor="middle"
+                      fill="#637169"
+                      fontSize={12}
+                    >
+                      {Object.keys(profile).length} skills rated
+                    </text>
+                    {branches.map((b, bi) => {
+                      const y = 148 + bi * 175;
+                      return (
+                        <g key={b.id}>
+                          <path
+                            d={`M128 390 C220 390 210 ${y} 325 ${y}`}
+                            fill="none"
+                            stroke={COLORS[b.id]}
+                            strokeWidth={1.4}
+                            opacity={0.35}
+                          />
+                          <circle cx={325} cy={y} r={7} fill={COLORS[b.id]} />
+                          <text
+                            x={325}
+                            y={y - 33}
+                            textAnchor="middle"
+                            fill={COLORS[b.id]}
+                            fontSize={15}
+                          >
+                            {clusterNames[b.id].split(' · ').map((part, i) => (
+                              <tspan key={part} x={325} dy={i ? 17 : 0}>
+                                {part}
+                              </tspan>
+                            ))}
+                          </text>
+                          {b.roles.map((o) => {
+                            const p = treePositions.get(o.id)!;
+                            const path = `M333 ${y} C435 ${y} 500 ${p.y} ${p.x - 12} ${p.y}`;
+                            const ai = aiValue(o, aiMetric);
+                            return (
+                              <g key={o.id}>
                                 <path
                                   d={path}
                                   fill="none"
-                                  stroke="#e34264"
-                                  strokeWidth={3}
-                                  pathLength={100}
-                                  strokeDasharray={`0 ${100 - ai * 100} ${ai * 100} 0`}
-                                  opacity={ai * 100 >= aiThreshold ? 0.85 : 0.4}
+                                  stroke={
+                                    QUALITY[quality.get(o.id)!.status].color
+                                  }
+                                  strokeWidth={2.4}
+                                  opacity={0.6}
                                 />
-                              )}
-                            </g>
-                          );
-                        })}
-                      </g>
-                    );
-                  })}
-                </g>
-              )}
-              {mapOccupations.map((o, i) => {
-                const position = isTree ? treePositions.get(o.id)! : point(o);
-                const p = { x: 0, y: 0 };
-                const score = scores.get(o.id)?.score ?? 0;
-                const missingSkills =
-                  basis === 'skills' && o.imputedMeasurements === 70;
-                const bright =
-                  mode === 'career' && hasProfile && color !== 'quality';
-                const active = selected === o.id || hovered === o.id;
-                const fill = isTree
-                  ? QUALITY[quality.get(o.id)!.status].color
-                  : color === 'pay'
-                    ? payColor(wageAt(o, percentile, unit), unit)
-                    : color === 'quality'
-                      ? QUALITY[quality.get(o.id)!.status].color
-                      : COLORS[o.cluster];
-                const opacity = bright
-                  ? scores.get(o.id)?.score == null
-                    ? 0.5
-                    : 0.3 + 0.7 * (score / 100) ** 3
-                  : 0.8;
-                return (
-                  <g
-                    key={o.id}
-                    data-occupation={o.id}
-                    role="button"
-                    tabIndex={
-                      Math.min(focusIndex, mapOccupations.length - 1) === i
-                        ? 0
-                        : -1
-                    }
-                    aria-label={`${o.title}, ${QUALITY[quality.get(o.id)!.status].label}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}${aiOverlay ? `, ${aiLabel(o, aiMetric)}` : ''}`}
-                    className="occupation-node"
-                    onFocus={() => {
-                      setFocusIndex(i);
-                      setHovered(o.id);
-                    }}
-                    onBlur={() => setHovered(null)}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onMouseEnter={() => setHovered(o.id)}
-                    onMouseLeave={() => setHovered(null)}
-                    onClick={() => roleSelect(o.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        roleSelect(o.id);
-                      } else if (e.key.startsWith('Arrow')) {
-                        e.preventDefault();
-                        const next =
-                          (i +
-                            (e.key === 'ArrowRight' || e.key === 'ArrowDown'
-                              ? 1
-                              : -1) +
-                            mapOccupations.length) %
-                          mapOccupations.length;
-                        setFocusIndex(next);
-                        (
-                          svgRef.current?.querySelector(
-                            `[data-occupation="${mapOccupations[next].id}"]`,
-                          ) as SVGGElement
-                        )?.focus();
-                      }
-                    }}
-                    style={{
-                      transform: `translate(${position.x}px,${position.y}px)`,
-                    }}
-                  >
-                    <title>
-                      {o.title}
-                      {missingSkills
-                        ? ' · No reported skill measurements; position imputed'
-                        : ''}
-                      {aiOverlay ? ` · ${aiLabel(o, aiMetric)}` : ''}
-                    </title>
-                    {aiOverlay && (
-                      <ExposureRing
-                        x={p.x}
-                        y={p.y}
-                        radius={(isTree ? 10 : 6.8) / Math.sqrt(view.k)}
-                        value={aiValue(o, aiMetric)}
-                        threshold={aiThreshold}
-                      />
-                    )}
-                    {(active || (bright && score >= 90)) && (
-                      <circle
-                        cx={p.x}
-                        cy={p.y}
-                        r={(active ? 7 : 4.5) / Math.sqrt(view.k)}
-                        fill={fill}
-                        opacity={active ? 0.35 : 0.16}
-                        filter="url(#node-glow)"
-                      />
-                    )}
-                    <circle
-                      cx={p.x}
-                      cy={p.y}
-                      r={9 / view.k}
-                      fill="transparent"
-                    />
-                    <circle
-                      className="node-core"
-                      cx={p.x}
-                      cy={p.y}
-                      r={(active ? 5.5 : 3.1) / Math.sqrt(view.k)}
-                      fill={missingSkills ? 'none' : fill}
-                      stroke={missingSkills ? '#aaa4b9' : undefined}
-                      strokeWidth={
-                        missingSkills ? 1.5 / Math.sqrt(view.k) : undefined
-                      }
-                      opacity={isTree ? 1 : opacity}
-                    />
-                    {isTree && (
-                      <>
-                        <text
-                          x={p.x + 24}
-                          y={p.y - 3}
-                          fill="#eee7f3"
-                          fontSize={16}
-                        >
-                          {o.title.length > 48
-                            ? `${o.title.slice(0, 47)}…`
-                            : o.title}
-                        </text>
-                        <text
-                          x={p.x + 24}
-                          y={p.y + 17}
-                          fill={QUALITY[quality.get(o.id)!.status].color}
-                          fontSize={12}
-                        >
-                          {QUALITY[quality.get(o.id)!.status].label} ·{' '}
-                          {money(wageAt(o, percentile, unit), true, unit)}
-                          {aiOverlay
-                            ? ` · AI ${aiValue(o, aiMetric) === null ? '—' : `${(aiValue(o, aiMetric)! * 100).toFixed(1)}/100`}`
-                            : ''}
-                        </text>
-                      </>
-                    )}
-                    {active && (
-                      <circle
-                        cx={p.x}
-                        cy={p.y}
-                        r={10 / Math.sqrt(view.k)}
-                        fill="none"
-                        stroke={fill}
-                        strokeWidth={1 / view.k}
-                      />
-                    )}
+                                {aiOverlay && ai !== null && (
+                                  <path
+                                    d={path}
+                                    fill="none"
+                                    stroke="#b14832"
+                                    strokeWidth={3}
+                                    pathLength={100}
+                                    strokeDasharray={`0 ${100 - ai * 100} ${ai * 100} 0`}
+                                    opacity={
+                                      ai * 100 >= aiThreshold ? 0.85 : 0.4
+                                    }
+                                  />
+                                )}
+                              </g>
+                            );
+                          })}
+                        </g>
+                      );
+                    })}
                   </g>
-                );
-              })}
-              {!isTree &&
-                labels.map((label) => (
-                  <g
-                    key={label.id}
-                    className="cluster-label"
-                    aria-hidden="true"
-                  >
-                    <line
-                      x1={label.anchorX}
-                      y1={label.anchorY}
-                      x2={label.x + label.width / 2}
-                      y2={label.y + label.height / 2}
-                      stroke={COLORS[label.id]}
-                      strokeWidth={0.8 * label.scale}
-                      opacity={0.45}
-                    />
+                )}
+                {mapOccupations.map((o, i) => {
+                  const position = isTree ? treePositions.get(o.id)! : point(o);
+                  const p = { x: 0, y: 0 };
+                  const score = scores.get(o.id)?.score ?? 0;
+                  const missingSkills =
+                    basis === 'skills' && o.imputedMeasurements === 70;
+                  const bright =
+                    mode === 'career' && hasProfile && color !== 'quality';
+                  const active = selected === o.id || hovered === o.id;
+                  const fill = isTree
+                    ? QUALITY[quality.get(o.id)!.status].color
+                    : color === 'pay'
+                      ? payColor(wageAt(o, percentile, unit), unit)
+                      : color === 'quality'
+                        ? QUALITY[quality.get(o.id)!.status].color
+                        : COLORS[o.cluster];
+                  const opacity = bright
+                    ? scores.get(o.id)?.score == null
+                      ? 0.5
+                      : 0.3 + 0.7 * (score / 100) ** 3
+                    : 0.8;
+                  return (
                     <g
+                      key={o.id}
+                      data-occupation={o.id}
+                      role="button"
+                      tabIndex={
+                        Math.min(focusIndex, mapOccupations.length - 1) === i
+                          ? 0
+                          : -1
+                      }
+                      aria-label={`${o.title}, ${QUALITY[quality.get(o.id)!.status].label}, ${money(wageAt(o, percentile, unit), false, unit)} at percentile ${PERCENTILES[percentile]}${aiOverlay ? `, ${aiLabel(o, aiMetric)}` : ''}`}
+                      className="occupation-node"
+                      onFocus={() => {
+                        setFocusIndex(i);
+                        setHovered(o.id);
+                      }}
+                      onBlur={() => setHovered(null)}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onMouseEnter={() => setHovered(o.id)}
+                      onMouseLeave={() => setHovered(null)}
+                      onClick={() => roleSelect(o.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          roleSelect(o.id);
+                        } else if (e.key.startsWith('Arrow')) {
+                          e.preventDefault();
+                          const next =
+                            (i +
+                              (e.key === 'ArrowRight' || e.key === 'ArrowDown'
+                                ? 1
+                                : -1) +
+                              mapOccupations.length) %
+                            mapOccupations.length;
+                          setFocusIndex(next);
+                          (
+                            svgRef.current?.querySelector(
+                              `[data-occupation="${mapOccupations[next].id}"]`,
+                            ) as SVGGElement
+                          )?.focus();
+                        }
+                      }}
                       style={{
-                        transform: `translate(${label.x}px,${label.y}px)`,
+                        transform: `translate(${position.x}px,${position.y}px)`,
                       }}
                     >
-                      <rect
-                        width={label.width}
-                        height={label.height}
-                        rx={5 * label.scale}
-                        fill="#15151e"
-                        fillOpacity={0.94}
+                      <title>
+                        {o.title}
+                        {missingSkills
+                          ? ' · No reported skill measurements; position imputed'
+                          : ''}
+                        {aiOverlay ? ` · ${aiLabel(o, aiMetric)}` : ''}
+                      </title>
+                      {aiOverlay && (
+                        <ExposureRing
+                          x={p.x}
+                          y={p.y}
+                          radius={(isTree ? 10 : 6.8) / Math.sqrt(view.k)}
+                          value={aiValue(o, aiMetric)}
+                          threshold={aiThreshold}
+                        />
+                      )}
+                      {(active || (bright && score >= 90)) && (
+                        <circle
+                          cx={p.x}
+                          cy={p.y}
+                          r={(active ? 7 : 4.5) / Math.sqrt(view.k)}
+                          fill={fill}
+                          opacity={active ? 0.35 : 0.16}
+                          filter="url(#node-glow)"
+                        />
+                      )}
+                      <circle
+                        cx={p.x}
+                        cy={p.y}
+                        r={9 / view.k}
+                        fill="transparent"
                       />
-                      <text
-                        textAnchor="middle"
-                        fill={COLORS[label.id]}
-                        fontSize={14 * label.scale}
-                      >
-                        {label.lines.map((line, i) => (
-                          <tspan
-                            key={i}
-                            x={label.width / 2}
-                            y={(19 + i * 18) * label.scale}
+                      <circle
+                        className="node-core"
+                        cx={p.x}
+                        cy={p.y}
+                        r={(active ? 5.5 : 3.1) / Math.sqrt(view.k)}
+                        fill={missingSkills ? 'none' : fill}
+                        stroke={missingSkills ? '#737d75' : undefined}
+                        strokeWidth={
+                          missingSkills ? 1.5 / Math.sqrt(view.k) : undefined
+                        }
+                        opacity={isTree ? 1 : opacity}
+                      />
+                      {isTree && (
+                        <>
+                          <text
+                            x={p.x + 24}
+                            y={p.y - 3}
+                            fill="#203b32"
+                            fontSize={16}
                           >
-                            {line}
-                          </tspan>
-                        ))}
-                      </text>
+                            {o.title.length > 48
+                              ? `${o.title.slice(0, 47)}…`
+                              : o.title}
+                          </text>
+                          <text
+                            x={p.x + 24}
+                            y={p.y + 17}
+                            fill={QUALITY[quality.get(o.id)!.status].color}
+                            fontSize={12}
+                          >
+                            {QUALITY[quality.get(o.id)!.status].label} ·{' '}
+                            {money(wageAt(o, percentile, unit), true, unit)}
+                            {aiOverlay
+                              ? ` · AI ${aiValue(o, aiMetric) === null ? '—' : `${(aiValue(o, aiMetric)! * 100).toFixed(1)}/100`}`
+                              : ''}
+                          </text>
+                        </>
+                      )}
+                      {active && (
+                        <circle
+                          cx={p.x}
+                          cy={p.y}
+                          r={10 / Math.sqrt(view.k)}
+                          fill="none"
+                          stroke={fill}
+                          strokeWidth={1 / view.k}
+                        />
+                      )}
                     </g>
-                  </g>
-                ))}
-            </g>
-          </svg>
-        )}
-        {!visible.length && data && (
-          <div className="map-empty">
-            {focusPaths
-              ? 'No roles meet your current guardrails and filters.'
-              : 'No matching occupations'}
-            {focusPaths && (
+                  );
+                })}
+                {!isTree &&
+                  labels.map((label) => (
+                    <g
+                      key={label.id}
+                      className="cluster-label"
+                      aria-hidden="true"
+                    >
+                      <line
+                        x1={label.anchorX}
+                        y1={label.anchorY}
+                        x2={label.x + label.width / 2}
+                        y2={label.y + label.height / 2}
+                        stroke={COLORS[label.id]}
+                        strokeWidth={0.8 * label.scale}
+                        opacity={0.45}
+                      />
+                      <g
+                        style={{
+                          transform: `translate(${label.x}px,${label.y}px)`,
+                        }}
+                      >
+                        <rect
+                          width={label.width}
+                          height={label.height}
+                          rx={5 * label.scale}
+                          fill="#fbfaf4"
+                          fillOpacity={0.94}
+                        />
+                        <text
+                          textAnchor="middle"
+                          fill={COLORS[label.id]}
+                          fontSize={14 * label.scale}
+                        >
+                          {label.lines.map((line, i) => (
+                            <tspan
+                              key={i}
+                              x={label.width / 2}
+                              y={(19 + i * 18) * label.scale}
+                            >
+                              {line}
+                            </tspan>
+                          ))}
+                        </text>
+                      </g>
+                    </g>
+                  ))}
+              </g>
+            </svg>
+          )}
+          {!visible.length && data && (
+            <div className="map-empty">
+              {focusPaths
+                ? 'No roles meet your current guardrails and filters.'
+                : 'No matching occupations'}
+              {focusPaths && (
+                <button
+                  onClick={() => {
+                    setCollapsed(false);
+                    setPhase(4);
+                  }}
+                >
+                  Adjust guardrails
+                </button>
+              )}
               <button
                 onClick={() => {
-                  setCollapsed(false);
-                  setPhase(4);
+                  reset();
+                  setZone(0);
+                  if (focusPaths) setShowAllPaths(true);
                 }}
               >
-                Adjust guardrails
+                {focusPaths ? 'Show all paths' : 'Clear filters'}
               </button>
-            )}
-            <button
-              onClick={() => {
-                reset();
-                setZone(0);
-                if (focusPaths) setShowAllPaths(true);
-              }}
-            >
-              {focusPaths ? 'Show all paths' : 'Clear filters'}
-            </button>
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </section>
       {hover && (
         <div className="hover-card bubble" role="status">
@@ -2248,7 +2280,7 @@ export default function Home() {
             <TrendingUp size={18} />
           </div>
           <div>
-            <strong>{payOpen ? 'Explore earning potential' : 'Pay'}</strong>
+            <strong>{payOpen ? 'Compensation' : 'Pay'}</strong>
             {payOpen && <span>US wage distribution · BLS 2025</span>}
           </div>
           {payOpen && (
@@ -2300,9 +2332,7 @@ export default function Home() {
               ))}
             </div>
             <div className="pay-dock-bottom">
-              <span>
-                Wages, not total compensation or an earnings forecast.
-              </span>
+              <span>Wages only · excludes benefits</span>
               <button
                 onClick={() => {
                   setLayout('map');
